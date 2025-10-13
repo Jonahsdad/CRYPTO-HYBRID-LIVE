@@ -21,6 +21,7 @@ def pct_sigmoid(pct):
 
 try:
     df = fetch_markets()
+    # Ensure required columns exist
     for k in ["current_price","market_cap","total_volume",
               "price_change_percentage_1h_in_currency",
               "price_change_percentage_24h_in_currency",
@@ -28,6 +29,7 @@ try:
               "name","symbol"]:
         if k not in df.columns: df[k] = np.nan
 
+    # Features
     df["vol_to_mc"] = (df["total_volume"]/df["market_cap"]).replace([np.inf,-np.inf],np.nan).clip(0,2).fillna(0)
     df["momo_1h01"]  = df["price_change_percentage_1h_in_currency"].apply(pct_sigmoid)
     df["momo_24h01"] = df["price_change_percentage_24h_in_currency"].apply(pct_sigmoid)
@@ -35,6 +37,7 @@ try:
     mc = df["market_cap"].fillna(0)
     df["liquidity01"] = 0 if mc.max()==0 else (mc-mc.min())/(mc.max()-mc.min()+1e-9)
 
+    # Scores
     df["raw_heat"] = (0.5*(df["vol_to_mc"]/2).clip(0,1) + 0.5*df["momo_1h01"].fillna(0.5)).clip(0,1)
     df["truth_full"] = (
         0.30*(df["vol_to_mc"]/2).clip(0,1) +
