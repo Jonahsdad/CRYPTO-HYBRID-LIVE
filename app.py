@@ -1,14 +1,20 @@
-# ====================== 
+# ====================== IMPORTS ======================
+import math, time, random, requests, pandas as pd, numpy as np, streamlit as st
+from datetime import datetime, timezone
+from io import StringIO
+
+# Plotly (safe import so the app never crashes if not installed yet)
 try:
     import plotly.express as px
     PLOTLY_OK = True
 except Exception:
     PLOTLY_OK = False
+
 # ====================== APP CONFIG / FEATURE FLAGS ======================
 APP_NAME = "Crypto Hybrid Live — Ultimate"
 BRAND_FOOTER = "Data: CoinGecko • Educational analytics — not financial advice. © Crypto Hybrid Live"
 FEATURES = {
-    "DEV_PULSE": True,          # CoinGecko developer_data (no key; rate-limited)
+    "DEV_PULSE": True,          # CoinGecko developer_data (no key; gentle rate limit)
     "ENTROPY_BIAS": True,       # Stability (entropy) + next-24h bias classifier
     "ALERTS": True,             # On-screen alerts (threshold-based)
     "SNAPSHOT": True,           # One-click snapshot CSV (Top Truth + Top Raw)
@@ -27,12 +33,12 @@ with st.sidebar:
     topn = st.slider("Show top N by market cap", 20, 250, 100, step=10)
     search = st.text_input("🔎 Search coin (name or symbol)").strip().lower()
 
+    # Weight presets
     if FEATURES["WEIGHT_PRESETS"]:
         st.markdown("#### Presets")
         preset = st.selectbox("Choose a preset",
                               ["Balanced (default)", "Momentum", "Liquidity", "Value"],
                               index=0)
-        # defaults (can be overridden by sliders below)
         if preset == "Momentum":
             w_vol, w_m24, w_m7, w_liq = 0.15, 0.45, 0.30, 0.10
         elif preset == "Liquidity":
@@ -194,6 +200,22 @@ def fetch_dev_pulse(ids):
     return dfp[["id","dev_pulse01","dev_stars","dev_forks","dev_subs","dev_pr_merged","dev_commit_4w"]]
 
 # ====================== LOAD & FEATURE ENGINEERING ======================
+# URL params (load before slicing)
+params = get_params()
+if "q" in params and not search:
+    try: search = params["q"][0]
+    except Exception: pass
+if "n" in params:
+    try: topn = int(params["n"][0])
+    except Exception: pass
+for key, var in [("wv","w_vol"),("w24","w_m24"),("w7","w_m7"),("wl","w_liq")]:
+    if key in params:
+        try:
+            val = float(params[key][0])
+            if var in locals(): locals()[var] = val
+        except Exception:
+            pass
+
 df = fetch_markets(vs_currency)
 if df.empty:
     st.error("Could not load data from CoinGecko. Please refresh in a minute.")
@@ -209,22 +231,6 @@ need = [
 ]
 for k in need:
     if k not in df.columns: df[k] = np.nan
-
-# Optional: load URL params (q, n, wv, w24, w7, wl)
-params = get_params()
-if "q" in params and not search:
-    try: search = params["q"][0]
-    except Exception: pass
-if "n" in params:
-    try: topn = int(params["n"][0])
-    except Exception: pass
-for key, var in [("wv","w_vol"),("w24","w_m24"),("w7","w_m7"),("wl","w_liq")]:
-    if key in params:
-        try:
-            val = float(params[key][0])
-            if var in locals(): locals()[var] = val
-        except Exception:
-            pass
 
 # Feature engineering
 df["vol_to_mc"] = (df["total_volume"]/df["market_cap"]).replace([np.inf,-np.inf],np.nan).clip(0,2).fillna(0)
@@ -284,9 +290,9 @@ with cC: st.metric("Avg Truth", f"{df['truth_full'].mean():.2f}")
 with cD: st.metric("Last update (UTC)", now)
 
 truth_cols = ["name","symbol","current_price","market_cap","truth_full","divergence"]
-if "entropy01" in df.columns: truth_cols += ["entropy01"]
-if "bias_24h" in df.columns: truth_cols += ["bias_24h"]
-truth_cols += ["mood"]
+if "entropy01" in df.columns: truth_cols.append("entropy01")
+if "bias_24h" in df.columns: truth_cols.append("bias_24h")
+truth_cols.append("mood")
 raw_cols   = ["name","symbol","current_price","market_cap","total_volume","raw_heat"]
 
 top_truth = df.sort_values("truth_full", ascending=False).head(25)[truth_cols]
@@ -332,20 +338,23 @@ with tab3:
 
 with tab4:
     st.subheader("🗺️ Market Heatmap by Truth (Top 50 by Market Cap)")
-    top50 = df.sort_values("market_cap", ascending=False).head(50)
-    try:
-        fig = px.treemap(
-            top50,
-            path=[top50["symbol"].str.upper()],
-            values="market_cap",
-            color="truth_full",
-            color_continuous_scale="Turbo",
-            title=None
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    except Exception as e:
-        st.info("Heatmap unavailable at the moment.")
-        st.exception(e)
+    if not PLOTLY_OK:
+        st.info("Plotly not available yet. Rebuilding… Try again shortly after dependencies install.")
+    else:
+        top50 = df.sort_values("market_cap", ascending=False).head(50)
+        try:
+            fig = px.treemap(
+                top50,
+                path=[top50["symbol"].str.upper()],
+                values="market_cap",
+                color="truth_full",
+                color_continuous_scale="Turbo",
+                title=None
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.info("Heatmap unavailable at the moment.")
+            st.exception(e)
 
 with tab5:
     st.subheader("🧑‍💻 Developer Pulse (Top 25 by Market Cap)")
@@ -358,11 +367,9 @@ with tab5:
             if devdf.empty:
                 st.info("Developer data temporarily unavailable.")
             else:
-                m = df.merge(devdf, on("id"), how="left")  # defensive merge if id present
-                # If merge fails due to typo above, use the safe version:
-                # m = df.merge(devdf, on="id", how="left")
+                m = df.merge(devdf, on="id", how="left")
                 cols = ["name","symbol","dev_pulse01","dev_commit_4w","dev_pr_merged","dev_stars","dev_forks","dev_subs"]
-                if "name" not in m.columns:  # fallback
+                if "name" not in m.columns:  # fallback safety
                     m["name"] = m["id"]
                 if "symbol" not in m.columns:
                     m["symbol"] = m["id"]
@@ -404,4 +411,3 @@ if FEATURES["ALERTS"]:
 st.markdown("""<hr style="margin-top: 1rem; margin-bottom: 0.5rem;">""", unsafe_allow_html=True)
 api_status = "🟢 API OK" if not df.empty else "🔴 API issue"
 st.caption(f"{api_status} • {BRAND_FOOTER} • Terms & Privacy: add links in README")
-
