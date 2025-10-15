@@ -1,9 +1,9 @@
-# ====================== IMPORTS ======================
-import math, time, random, requests, pandas as pd, numpy as np, streamlit as st
-from datetime import datetime, timezone
-from io import StringIO
-import plotly.express as px
-
+# ====================== 
+try:
+    import plotly.express as px
+    PLOTLY_OK = True
+except Exception:
+    PLOTLY_OK = False
 # ====================== APP CONFIG / FEATURE FLAGS ======================
 APP_NAME = "Crypto Hybrid Live — Ultimate"
 BRAND_FOOTER = "Data: CoinGecko • Educational analytics — not financial advice. © Crypto Hybrid Live"
