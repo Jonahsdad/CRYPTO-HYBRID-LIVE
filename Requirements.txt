@@ -1,34 +1,3 @@
-# Core
-streamlit
-pandas
-numpy
-requests
-plotly
-textblob
-
-# Analytics & Forecasting
-scikit-learn
-prophet
-statsmodels
-
-# Visualization
-altair
-matplotlib
-seaborn
-
-# Data / API tools
-yfinance
-beautifulsoup4
-lxml
-
-# Performance & IO
-pyarrow
-fastparquet
-
-# Machine Learning / NLP (optional)
-torch
-transformers
-sentence-transformers
 streamlit
 pandas
 numpy
