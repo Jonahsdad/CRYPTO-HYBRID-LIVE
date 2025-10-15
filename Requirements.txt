@@ -29,3 +29,9 @@ fastparquet
 torch
 transformers
 sentence-transformers
+streamlit
+pandas
+numpy
+requests
+plotly
+textblob
