@@ -1,4 +1,4 @@
-Core Libraries
+Libraries
 streamlit
 pandas
 numpy
