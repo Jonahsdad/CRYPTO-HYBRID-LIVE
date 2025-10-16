@@ -4,7 +4,6 @@ lambda r: predictive_bias_label(
     r.get("price_change_percentage_7d_in_currency"), axis=1)
     , axis=1)
 df["mood"] = df["truth_full"].apply(mood_label)
-
 # ====================== EXTERNAL: REDDIT (no key) ======================
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_reddit_hot(limit=80):
