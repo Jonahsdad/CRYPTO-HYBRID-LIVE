@@ -19,7 +19,6 @@ def fetch_reddit_hot(limit=80):
         return titles
     except Exception:
         return []
-
 @st.cache_data(ttl=120, show_spinner=False)
 def social_buzz_scores(symbols):
     """Simple buzz & sentiment: count mentions in Reddit titles + TextBlob polarity."""
