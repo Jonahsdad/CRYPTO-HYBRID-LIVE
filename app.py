@@ -1,3 +1,4 @@
+
 # ====================== IMPORTS ======================
 import math, time, random, requests, pandas as pd, numpy as np, streamlit as st
 from datetime import datetime, timezone
@@ -11,14 +12,14 @@ try:
 except Exception:
     PLOTLY_OK = False
 
-# ====================== LIPE (inline so it's 1-file drop-in) ======================
+# ====================== LIPE (inline, 1-file drop-in) ======================
 DEFAULT_WEIGHTS = dict(w_vol=0.30, w_m24=0.25, w_m7=0.25, w_liq=0.20)
+
 def _normalize_weights(w):
     s = float(sum(max(0.0, v) for v in w.values())) or 1.0
     return {k: max(0.0, v)/s for k, v in w.items()}
 
 def lipe_online_weight_update(user_w, feedback, lr=0.05):
-    """User feedback nudges Truth weights (momo24/momo7/vol/liq in {-1,0,1})."""
     w = dict(user_w) if user_w else dict(DEFAULT_WEIGHTS)
     w['w_m24'] = w.get('w_m24', 0.25) + lr * float(feedback.get('momo24', 0))
     w['w_m7']  = w.get('w_m7',  0.25) + lr * float(feedback.get('momo7',  0))
@@ -52,11 +53,13 @@ def get_profile():
             "weights": dict(DEFAULT_WEIGHTS),
             "watchlist": [],
             "mode": "simple",
-            "tier": "free"
+            "tier": "free",
+            "public_votes": {}  # symbol -> +1 / -1
         }
     return st.session_state["_lipe_profile"]
 
 def save_profile(p): st.session_state["_lipe_profile"] = p
+
 def toggle_watch(symbol):
     p = get_profile()
     wl = set(p.get("watchlist", []))
@@ -66,22 +69,25 @@ def toggle_watch(symbol):
     save_profile(p)
 
 # ====================== APP CONFIG / FLAGS ======================
-APP_NAME = "Crypto Hybrid Live — Phase 2 (LIPE)"
+APP_NAME = "Crypto Hybrid Live — Phase 3 (LIPE)"
 BRAND_FOOTER = "Data: CoinGecko • Educational analytics — not financial advice. © Crypto Hybrid Live"
 FEATURES = {
     "DEV_PULSE": True,
     "ENTROPY_BIAS": True,
     "ALERTS": True,
     "SNAPSHOT": True,
-    "URL_STATE": True,   # st.query_params
+    "URL_STATE": True,         # st.query_params
     "WEIGHT_PRESETS": True,
+    "SPARKLINES": True,        # 7d mini-charts
+    "SOCIAL_CARD": True,       # shareable summary card (PNG fallback-friendly)
+    "PUBLIC_VOTES": True       # simple up/down vote per coin (session-only demo)
 }
 
 st.set_page_config(page_title=APP_NAME, layout="wide")
 st.title("🟢 " + APP_NAME)
-st.caption("Truth > Noise • Personalized by LIPE • Easy Mode + Pro Tools • Heatmaps • Alerts • Snapshots • Dev Pulse")
+st.caption("Truth > Noise • Personalized by LIPE • Easy Mode + Pro Tools • Heatmaps • Alerts • Snapshots • Dev Pulse • Viral Share")
 
-# ---- CSS bump for readability ----
+# ---- CSS: bigger fonts, clean cards, badges ----
 st.markdown("""
 <style>
 html, body, [class*="css"] { font-size: 18px; line-height: 1.45; }
@@ -90,6 +96,7 @@ h1, h2, h3 { font-weight: 700; }
 [data-testid="stTable"] td, [data-testid="stTable"] th { font-size: 16px !important; padding: 10px 8px !important; }
 .card {border:1px solid #2a2f3a; border-radius:10px; padding:14px; margin-bottom:10px;}
 .badge {padding:3px 8px; border-radius:6px; background:#223; font-size:12px;}
+.kpill {display:inline-block; padding:2px 8px; margin-right:6px; border-radius:999px; background:#17202a; font-size:12px;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -101,24 +108,32 @@ with st.sidebar:
     search = st.text_input("🔎 Search coin (name or symbol)").strip().lower()
 
     st.markdown("---")
-    simple_mode = st.toggle("🧸 Simple Mode (kid-friendly)", value=True)
+    simple_mode = st.toggle("🧸 Easy Mode (hide pro columns)", value=True)
 
     st.markdown("---")
     if FEATURES["WEIGHT_PRESETS"]:
         st.subheader("Truth Weight Presets")
         preset = st.selectbox("Preset", ["Balanced (default)", "Momentum", "Liquidity", "Value"], index=0)
-        desc = {
+        st.caption({
             "Balanced (default)":"Even mix of momentum + liquidity + stability.",
             "Momentum":"Chases recent winners harder (fast, risky).",
             "Liquidity":"Prefers bigger, deeper markets.",
             "Value":"Leans to under-loved coins with decent base."
-        }[preset]
-        st.caption(desc)
+        }[preset])
 
     st.markdown("---")
     st.subheader("Alerts (on-screen)")
     alert_truth = st.slider("Trigger: Truth ≥", 0.0, 1.0, 0.85, 0.01)
     alert_diverg = st.slider("Trigger: |Divergence| ≥", 0.0, 1.0, 0.30, 0.01)
+
+    st.markdown("---")
+    st.markdown("### 📧 Get the Daily Truth Brief")
+    email = st.text_input("Your email")
+    if st.button("Subscribe"):
+        st.success("You’re on the list! (Wire to Beehiiv/Substack/Sheets later.)")
+    st.markdown("— Or —")
+    st.link_button("Join our Discord", "https://discord.gg/your-invite")
+    st.link_button("Follow on X", "https://twitter.com/yourhandle")
 
 # ====================== HELPERS ======================
 def pct_sigmoid(pct):
@@ -171,14 +186,14 @@ def safe_get(url, params=None, timeout=30, retries=3, backoff=0.6):
 
 # ====================== DATA ======================
 @st.cache_data(ttl=60)
-def fetch_markets(vs="usd", per_page=250):
+def fetch_markets(vs="usd", per_page=250, spark=True):
     url = "https://api.coingecko.com/api/v3/coins/markets"
     p = {
         "vs_currency": vs,
         "order": "market_cap_desc",
         "per_page": per_page,
         "page": 1,
-        "sparkline": "false",
+        "sparkline": "true" if spark and FEATURES["SPARKLINES"] else "false",
         "price_change_percentage": "1h,24h,7d",
         "locale": "en",
     }
@@ -189,7 +204,6 @@ def fetch_markets(vs="usd", per_page=250):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_dev_pulse(ids):
-    """CoinGecko developer_data for top IDs (gentle on free tier)."""
     rows = []
     for cid in ids:
         try:
@@ -230,13 +244,6 @@ def fetch_dev_pulse(ids):
 params = get_params()
 profile = get_profile()
 
-if "q" in params and not search:
-    try: search = params["q"][0] if isinstance(params["q"], list) else str(params["q"])
-    except Exception: pass
-if "n" in params:
-    try: topn = int(params["n"][0] if isinstance(params["n"], list) else params["n"])
-    except Exception: pass
-
 df = fetch_markets(vs_currency)
 if df.empty:
     st.error("Could not load data from CoinGecko. Please refresh in a minute.")
@@ -264,17 +271,15 @@ df["liquidity01"] = 0 if mc.max()==0 else (mc - mc.min())/(mc.max() - mc.min() +
 df["raw_heat"] = (0.5*(df["vol_to_mc"]/2).clip(0,1) + 0.5*df["momo_1h01"].fillna(0.5)).clip(0,1)
 user_w = profile.get("weights", DEFAULT_WEIGHTS)
 
-# Apply preset (nudges starting weights; user learning still applies)
-if FEATURES["WEIGHT_PRESETS"]:
-    preset_map = {
-        "Momentum": dict(w_vol=0.15, w_m24=0.45, w_m7=0.30, w_liq=0.10),
-        "Liquidity":dict(w_vol=0.20, w_m24=0.20, w_m7=0.20, w_liq=0.40),
-        "Value":    dict(w_vol=0.40, w_m24=0.20, w_m7=0.20, w_liq=0.20),
-        "Balanced (default)": DEFAULT_WEIGHTS
-    }
-    base_w = preset_map.get(preset, DEFAULT_WEIGHTS)
-    # blend preset 70% with the user's learned weights (keeps personalization)
-    user_w = {k: 0.7*base_w.get(k,0) + 0.3*user_w.get(k,0) for k in DEFAULT_WEIGHTS.keys()}
+# Apply preset (blend with learned weights)
+preset_map = {
+    "Momentum": dict(w_vol=0.15, w_m24=0.45, w_m7=0.30, w_liq=0.10),
+    "Liquidity":dict(w_vol=0.20, w_m24=0.20, w_m7=0.20, w_liq=0.40),
+    "Value":    dict(w_vol=0.40, w_m24=0.20, w_m7=0.20, w_liq=0.20),
+    "Balanced (default)": DEFAULT_WEIGHTS
+}
+base_w = preset_map.get(preset, DEFAULT_WEIGHTS)
+user_w = {k: 0.7*base_w.get(k,0) + 0.3*user_w.get(k,0) for k in DEFAULT_WEIGHTS.keys()}
 
 df["truth_full"] = lipe_score_truth(df, user_w)
 df["divergence"] = (df["raw_heat"] - df["truth_full"]).round(3)
@@ -296,57 +301,50 @@ df["bias_24h"] = df.apply(
     ), axis=1
 )
 
-# URL share
+# Search & URL share
 set_params(q=search or None, n=str(topn))
-
-# Search filter
 if search:
     mask = df["name"].str.lower().str.contains(search) | df["symbol"].str.lower().str.contains(search)
     df = df[mask].copy()
 
-# ====================== KPIs / STORY / TEACH LIPE ======================
+# ====================== KPIs / PULSE / STORY ======================
 now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+avg_truth   = df["truth_full"].mean()
+avg_entropy = df["entropy01"].mean()
+avg_24h     = df["price_change_percentage_24h_in_currency"].mean()
+
 cA,cB,cC,cD = st.columns(4)
 with cA: st.metric("Coins", len(df))
-with cB: st.metric("Avg 24h Δ", f"{df['price_change_percentage_24h_in_currency'].mean():+.2f}%")
-with cC: st.metric("Avg Truth", f"{df['truth_full'].mean():.2f}")
+with cB: st.metric("Avg 24h Δ", f"{avg_24h:+.2f}%")
+with cC: st.metric("Avg Truth", f"{avg_truth:.2f}")
 with cD: st.metric("Last update (UTC)", now)
 
-# Rule-based "AI market story" (no external LLM)
-def market_story(df):
-    avg_truth = df["truth_full"].mean()
-    avg_ent   = df["entropy01"].mean()
-    avg_24h   = df["price_change_percentage_24h_in_currency"].mean()
+st.markdown(
+    f"<span class='kpill'>Market Pulse</span> Truth <b>{avg_truth:.2f}</b> • "
+    f"Entropy <b>{avg_entropy:.2f}</b> • 24h <b>{avg_24h:+.2f}%</b>",
+    unsafe_allow_html=True
+)
+
+def market_story():
     tone = "optimistic" if avg_truth>=0.6 else ("neutral" if avg_truth>=0.45 else "cautious")
-    chaos = "calm" if avg_ent>=0.6 else ("mixed" if avg_ent>=0.4 else "chaotic")
+    chaos = "calm" if avg_entropy>=0.6 else ("mixed" if avg_entropy>=0.4 else "chaotic")
     return (
         f"**Today’s market mood:** {tone} and {chaos}. "
         f"Average 24h move is {avg_24h:+.2f}%. "
-        f"Watch for **divergence spikes** (hype vs. truth) — top setups appear when hype cools but truth stays high."
+        f"Look for **High Truth + Low Entropy** as best setups."
     )
 
-with st.expander("🧠 Daily Story", expanded=True):
-    st.write(market_story(df))
+with st.expander("🧠 Daily Truth Brief", expanded=True):
+    st.write(market_story())
 
-st.markdown("### 🧠 Teach LIPE (tell the engine what you like)")
+# ====================== TEACH LIPE ======================
+st.markdown("### 🧠 Teach LIPE (what you value)")
 c1,c2,c3,c4 = st.columns(4)
 if c1.button("❤️ Momentum 24h"): profile["weights"] = lipe_online_weight_update(profile["weights"], {"momo24":+1}); save_profile(profile); st.rerun()
 if c2.button("💚 Momentum 7d"):  profile["weights"] = lipe_online_weight_update(profile["weights"], {"momo7":+1});  save_profile(profile); st.rerun()
 if c3.button("💙 Liquidity"):     profile["weights"] = lipe_online_weight_update(profile["weights"], {"liq":+1});     save_profile(profile); st.rerun()
 if c4.button("🧡 Volume/MC"):    profile["weights"] = lipe_online_weight_update(profile["weights"], {"vol":+1});     save_profile(profile); st.rerun()
 st.caption(f"Your LIPE weights → {profile['weights']}")
-
-# Truth explainer
-with st.expander("🧭 What is Truth Score? (tap to learn)", expanded=True):
-    st.write("""
-**Truth Score** is a 0.00–1.00 health meter. We blend:
-- **Momentum** (24h & 7d): is it moving up or down?
-- **Liquidity**: how big/active is the market?
-- **Stability (Entropy)**: calm is safer, chaos is risky.
-
-Higher **Truth** = stronger, healthier setup *right now*.  
-If **hype (Raw)** is high but **Truth** is low → **be careful** (smoke, no fire).
-""")
 
 # ====================== WATCHLIST & FOCUS ======================
 left, right = st.columns([0.55, 0.45])
@@ -359,14 +357,20 @@ with left:
     wl = get_profile().get("watchlist", [])
     if wl:
         wldf = df[df["symbol"].str.upper().isin(wl)].sort_values("truth_full", ascending=False)
-        st.dataframe(wldf[["name","symbol","current_price","truth_full","divergence","mood"]], use_container_width=True)
+        st.dataframe(
+            (wldf[["name","symbol","current_price","truth_full","divergence","mood"]]
+             if simple_mode else
+             wldf[["name","symbol","current_price","market_cap","liquidity01","truth_full","divergence","entropy01","bias_24h","mood"]]
+            ),
+            use_container_width=True
+        )
     else:
         st.info("Your watchlist is empty. Add symbols above.")
 
 with right:
     st.subheader("🎯 Focus coin")
     focus = st.selectbox("Pick a coin to inspect", ["(none)"] + df["name"].head(50).tolist())
-    if focus != "(none)":
+    if focus != "(none)" and PLOTLY_OK:
         row = df[df["name"] == focus].head(1).to_dict("records")[0]
         st.success(
             f"**{focus}** → Truth **{row['truth_full']:.2f}** ({row['mood']}) • "
@@ -375,27 +379,26 @@ with right:
             f"Liquidity {row['liquidity01']:.2f}"
         )
         st.caption("Why: " + lipe_explain_truth_row(row))
-        if PLOTLY_OK:
-            # Truth Gauge (easy to read dial)
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=float(row["truth_full"]),
-                number={'valueformat': '.2f'},
-                gauge={
-                    'axis': {'range': [0, 1]},
-                    'bar': {'color': "#23d18b"},
-                    'steps': [
-                        {'range': [0.0, 0.4], 'color': "#4b0000"},
-                        {'range': [0.4, 0.6], 'color': "#3a2c00"},
-                        {'range': [0.6, 0.8], 'color': "#1e3a00"},
-                        {'range': [0.8, 1.0], 'color': "#0d3b2a"},
-                    ],
-                }
-            ))
-            fig.update_layout(height=250, margin=dict(l=10,r=10,t=10,b=10))
-            st.plotly_chart(fig, use_container_width=True)
+        # Truth Gauge
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=float(row["truth_full"]),
+            number={'valueformat': '.2f'},
+            gauge={
+                'axis': {'range': [0, 1]},
+                'bar': {'color': "#23d18b"},
+                'steps': [
+                    {'range': [0.0, 0.4], 'color': "#4b0000"},
+                    {'range': [0.4, 0.6], 'color': "#3a2c00"},
+                    {'range': [0.6, 0.8], 'color': "#1e3a00"},
+                    {'range': [0.8, 1.0], 'color': "#0d3b2a"},
+                ],
+            }
+        ))
+        fig.update_layout(height=250, margin=dict(l=10,r=10,t=10,b=10))
+        st.plotly_chart(fig, use_container_width=True)
 
-# ====================== SNAPSHOT ======================
+# ====================== SNAPSHOT (CSV) ======================
 def make_snapshot_csv(df_truth, df_raw):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S_UTC")
     buf = StringIO()
@@ -405,42 +408,35 @@ def make_snapshot_csv(df_truth, df_raw):
     df_raw.to_csv(buf, index=False)
     return f"snapshot_{ts}.csv", buf.getvalue().encode("utf-8")
 
-truth_cols = ["name","symbol","current_price","market_cap","truth_full","divergence","entropy01","bias_24h","mood"]
-raw_cols   = ["name","symbol","current_price","market_cap","total_volume","raw_heat"]
-top_truth = df.sort_values("truth_full", ascending=False).head(25)[truth_cols]
+truth_cols_simple = ["name","symbol","current_price","truth_full","divergence","mood"]
+truth_cols_pro    = ["name","symbol","current_price","market_cap","liquidity01","truth_full","divergence","entropy01","bias_24h","mood"]
+raw_cols          = ["name","symbol","current_price","market_cap","total_volume","raw_heat"]
+
+top_truth = df.sort_values("truth_full", ascending=False).head(25)[truth_cols_pro if not simple_mode else truth_cols_simple]
 top_raw   = df.sort_values("raw_heat",   ascending=False).head(25)[raw_cols]
 fname, payload = make_snapshot_csv(top_truth, top_raw)
-st.download_button("⬇️ Download Snapshot (Truth + Raw)", payload, file_name=fname, mime="text/csv")
+st.download_button("⬇️ Download Snapshot (Truth + Raw CSV)", payload, file_name=fname, mime="text/csv")
 
 # ====================== TABS ======================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🔥 Raw (Just Buzz)", "🧭 Truth (Best Picks)", "📉 Movers (Up/Down)",
-    "🗺️ Map (Who’s Big)", "🧑‍💻 Builders (Dev Pulse)", "🧠 Simple Stories"
+    "📈 Mini Charts", "🗺️ Heatmaps", "🧑‍💻 Dev Pulse", "📣 Social / Votes"
 ])
 
 with tab1:
     st.subheader("🔥 Raw Wide Scan")
     cols = ["name","symbol","current_price","market_cap","total_volume","raw_heat"]
     st.dataframe(df.sort_values("raw_heat", ascending=False)[cols].reset_index(drop=True), use_container_width=True)
-    st.download_button("⬇️ CSV (Raw Scan)", df[cols].to_csv(index=False).encode("utf-8"), "raw_scan.csv", "text/csv")
+    st.download_button("⬇️ CSV (Raw Scan)", df[cols].to_csv(index=False).encode("utf-8"), "raw_scan.csv","text/csv")
 
 with tab2:
     st.subheader("🧭 Truth Filter (weights applied)")
-    colcfg = {
-        "truth_full": st.column_config.NumberColumn("Truth Score", help="0..1 health score combining momentum, liquidity, stability.", format="%.2f"),
-        "divergence": st.column_config.NumberColumn("Divergence", help="Raw Heat minus Truth. Positive=hype; negative=potentially undervalued.", format="%.2f"),
-        "liquidity01": st.column_config.NumberColumn("Liquidity (0-1)", help="Relative size/activity vs top coins.", format="%.2f"),
-        "entropy01": st.column_config.NumberColumn("Stability (Entropy)", help="Higher = calmer price behavior (less chaos).", format="%.2f"),
-        "bias_24h": st.column_config.TextColumn("Bias (Next 24h)", help="Likely Up / Cooling / Mixed / Overheated"),
-        "mood": st.column_config.TextColumn("Mood", help="Euphoric / Optimistic / Neutral / Fearful"),
-    }
-    cols = ["name","symbol","current_price","market_cap","liquidity01","truth_full","divergence","entropy01","bias_24h","mood"]
+    cols = truth_cols_pro if not simple_mode else truth_cols_simple
     st.dataframe(
         df.sort_values("truth_full", ascending=False)[cols].reset_index(drop=True),
-        use_container_width=True,
-        column_config=colcfg
+        use_container_width=True
     )
-    st.download_button("⬇️ CSV (Truth Table)", df[cols].to_csv(index=False).encode("utf-8"), "truth_table.csv", "text/csv")
+    st.download_button("⬇️ CSV (Truth Table)", df[cols].to_csv(index=False).encode("utf-8"), "truth_table.csv","text/csv")
 
 with tab3:
     st.subheader("📉 Top Daily Gainers / Losers (24h)")
@@ -450,44 +446,57 @@ with tab3:
     with c1:
         st.write("**Top Gainers**")
         st.dataframe(g[["name","symbol","current_price","price_change_percentage_24h_in_currency"]].reset_index(drop=True), use_container_width=True)
-        st.download_button("⬇️ Gainers (CSV)", g.to_csv(index=False).encode("utf-8"), "gainers.csv", "text/csv")
+        st.download_button("⬇️ Gainers (CSV)", g.to_csv(index=False).encode("utf-8"), "gainers.csv","text/csv")
     with c2:
         st.write("**Top Losers**")
         st.dataframe(l[["name","symbol","current_price","price_change_percentage_24h_in_currency"]].reset_index(drop=True), use_container_width=True)
-        st.download_button("⬇️ Losers (CSV)", l.to_csv(index=False).encode("utf-8"), "losers.csv", "text/csv")
+        st.download_button("⬇️ Losers (CSV)", l.to_csv(index=False).encode("utf-8"), "losers.csv","text/csv")
 
 with tab4:
-    st.subheader("🗺️ Market Heatmaps")
+    st.subheader("📈 7-Day Mini Charts (Top 10 by Truth)")
+    if not PLOTLY_OK or "sparkline_in_7d" not in df.columns:
+        st.info("Mini charts need Plotly and sparkline data. Try again shortly.")
+    else:
+        top10 = df.sort_values("truth_full", ascending=False).head(10)
+        for _, r in top10.iterrows():
+            prices = (r.get("sparkline_in_7d") or {}).get("price", [])
+            if not prices or not PLOTLY_OK: continue
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(y=prices, mode="lines", name=str(r["symbol"]).upper()))
+            fig.update_layout(
+                title=f"{r['name']} ({str(r['symbol']).upper()}) • Truth {r['truth_full']:.2f}",
+                height=220, margin=dict(l=10,r=10,t=30,b=10), showlegend=False
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+with tab5:
+    st.subheader("🗺️ Heatmaps (Top 50 by Market Cap)")
     if not PLOTLY_OK:
-        st.info("Plotly not available yet. Rebuilding… Try again shortly.")
+        st.info("Plotly not available yet.")
     else:
         top50 = df.sort_values("market_cap", ascending=False).head(50)
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("**By Truth (Top 50 by Market Cap)**")
+            st.markdown("**Truth Heatmap**")
             try:
-                fig = px.treemap(
-                    top50, path=[top50["symbol"].str.upper()], values="market_cap",
-                    color="truth_full", color_continuous_scale="Turbo"
-                )
+                fig = px.treemap(top50, path=[top50["symbol"].str.upper()], values="market_cap",
+                                 color="truth_full", color_continuous_scale="Turbo")
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.info("Truth heatmap unavailable.")
                 st.exception(e)
         with c2:
-            st.markdown("**By 24h % Change (Top 50 by Market Cap)**")
+            st.markdown("**24h % Change Heatmap**")
             try:
-                fig2 = px.treemap(
-                    top50, path=[top50["symbol"].str.upper()], values="market_cap",
-                    color="price_change_percentage_24h_in_currency",
-                    color_continuous_scale="Picnic"
-                )
+                fig2 = px.treemap(top50, path=[top50["symbol"].str.upper()], values="market_cap",
+                                  color="price_change_percentage_24h_in_currency",
+                                  color_continuous_scale="Picnic")
                 st.plotly_chart(fig2, use_container_width=True)
             except Exception as e:
                 st.info("24h change heatmap unavailable.")
                 st.exception(e)
 
-with tab5:
+with tab6:
     st.subheader("🧑‍💻 Developer Pulse (Top 25 by Market Cap)")
     if FEATURES["DEV_PULSE"]:
         top_ids = df.sort_values("market_cap", ascending=False).head(25)["id"].tolist() if "id" in df.columns else []
@@ -511,14 +520,57 @@ with tab5:
     else:
         st.info("Dev Pulse feature is disabled.")
 
-with tab6:
-    st.subheader("🧠 Simple Stories (Top 12 by Truth)")
-    for _, row in df.sort_values("truth_full", ascending=False).head(12).iterrows():
-        st.markdown(f"<div class='card'><b>{row['name']} ({str(row['symbol']).upper()})</b><br/>"
-                    f"Truth {row['truth_full']:.2f} — {row['mood']} • "
-                    f"24h {row['price_change_percentage_24h_in_currency']:+.1f}% • "
-                    f"7d {row['price_change_percentage_7d_in_currency']:+.1f}%<br/>"
-                    f"<span class='badge'>Why:</span> {lipe_explain_truth_row(row)}</div>", unsafe_allow_html=True)
+with tab7:
+    st.subheader("📣 Social / Votes")
+    st.write("**Make it viral** — share a simple Top-5 Truth summary. Upvote/Downvote coins to teach public sentiment (demo, session-only).")
+
+    # Public votes (session demo)
+    if FEATURES["PUBLIC_VOTES"]:
+        v = profile.get("public_votes", {})
+        pick = st.selectbox("Pick a coin to vote", ["(choose)"] + df["symbol"].str.upper().tolist())
+        c1, c2 = st.columns(2)
+        if c1.button("👍 Upvote") and pick != "(choose)":
+            v[pick] = v.get(pick, 0) + 1
+            profile["public_votes"] = v; save_profile(profile)
+        if c2.button("👎 Downvote") and pick != "(choose)":
+            v[pick] = v.get(pick, 0) - 1
+            profile["public_votes"] = v; save_profile(profile)
+        if v:
+            vv = pd.DataFrame([{"symbol":k, "votes":val} for k,val in v.items()]).sort_values("votes", ascending=False)
+            st.dataframe(vv, use_container_width=True)
+        else:
+            st.info("No votes yet. Try upvoting a symbol.")
+
+    # Top-5 Truth summary text + PNG card (if kaleido available)
+    top5 = df.sort_values("truth_full", ascending=False).head(5)[["name","symbol","truth_full","mood","divergence"]]
+    st.markdown("**Top-5 Truth (shareable):**")
+    st.table(top5.assign(symbol=top5["symbol"].str.upper()))
+
+    # Build a shareable Plotly card
+    if PLOTLY_OK and FEATURES["SOCIAL_CARD"]:
+        txt_lines = [f"{r['name']} ({str(r['symbol']).upper()}): Truth {r['truth_full']:.2f} • {r['mood']} • Div {r['divergence']:+.2f}"
+                     for _, r in top5.iterrows()]
+        card_text = "<br>".join(txt_lines) if txt_lines else "No data"
+        fig = go.Figure()
+        fig.add_annotation(
+            x=0.01, y=0.95, xanchor="left", yanchor="top", align="left",
+            text=f"<b>Crypto Hybrid Live — Top-5 Truth</b><br>{card_text}<br><br><i>Truth > Hype • Powered by LIPE</i>",
+            showarrow=False
+        )
+        fig.update_layout(
+            width=900, height=500, paper_bgcolor="#0E1117",
+            margin=dict(l=20,r=20,t=20,b=20), xaxis={'visible': False}, yaxis={'visible': False}
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Try PNG export (needs kaleido); fallback: CSV + copyable text
+        try:
+            png_bytes = fig.to_image(format="png", scale=2)  # requires kaleido
+            st.download_button("🖼️ Download Share Card (PNG)", png_bytes, file_name="top5_truth_card.png", mime="image/png")
+        except Exception:
+            st.info("Add `kaleido` to requirements.txt for PNG export. For now, copy text or download CSV below.")
+
+    st.download_button("⬇️ Download Top-5 (CSV)", top5.to_csv(index=False).encode("utf-8"), "top5_truth.csv","text/csv")
 
 # ====================== ALERTS ======================
 if FEATURES["ALERTS"]:
@@ -532,4 +584,4 @@ if FEATURES["ALERTS"]:
 # ====================== FOOTER ======================
 st.markdown("""<hr style="margin-top: 1rem; margin-bottom: 0.5rem;">""", unsafe_allow_html=True)
 api_status = "🟢 API OK" if not df.empty else "🔴 API issue"
-st.caption(f"{api_status} • {BRAND_FOOTER} • Terms & Privacy: add links in README")
+st.caption(f"{api_status} • {BRAND_FOOTER} • Truth = momentum + liquidity + stability. Explanations inside each card.")
