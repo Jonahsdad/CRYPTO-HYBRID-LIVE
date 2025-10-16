@@ -1,7 +1,8 @@
 lambda r: predictive_bias_label(
     r.get("price_change_percentage_1h_in_currency"),
     r.get("price_change_percentage_24h_in_currency"),
-    r.get("price_change_percentage_7d_in_currency")), axis=1)
+    r.get("price_change_percentage_7d_in_currency"), axis=1)
+    , axis=1)
 df["mood"] = df["truth_full"].apply(mood_label)
 
 # ====================== EXTERNAL: REDDIT (no key) ======================
