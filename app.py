@@ -18,7 +18,7 @@ FEATURES = {
     "ENTROPY_BIAS": True,       # Stability (entropy) + next-24h bias classifier
     "ALERTS": True,             # On-screen alerts (threshold-based)
     "SNAPSHOT": True,           # One-click snapshot CSV (Top Truth + Top Raw)
-    "URL_STATE": True,          # Shareable URL with current settings
+    "URL_STATE": True,          # Shareable URL with current settings (uses st.query_params)
     "WEIGHT_PRESETS": True,     # Quick-select presets for Truth weights
 }
 
@@ -105,12 +105,16 @@ def predictive_bias_label(m1h, m24, m7):
         return "🟠 Overheated"
     return "⚪ Mixed"
 
+# --- URL state (modern Streamlit) ---
 def get_params():
-    return st.experimental_get_query_params() if FEATURES["URL_STATE"] else {}
+    return st.query_params if FEATURES["URL_STATE"] else {}
 
 def set_params(**kwargs):
     if FEATURES["URL_STATE"]:
-        st.experimental_set_query_params(**{k: v for k, v in kwargs.items() if v is not None})
+        st.query_params.clear()
+        for k, v in kwargs.items():
+            if v is not None:
+                st.query_params[k] = v
 
 def make_snapshot_csv(df_truth, df_raw):
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S_UTC")
@@ -200,18 +204,19 @@ def fetch_dev_pulse(ids):
     return dfp[["id","dev_pulse01","dev_stars","dev_forks","dev_subs","dev_pr_merged","dev_commit_4w"]]
 
 # ====================== LOAD & FEATURE ENGINEERING ======================
-# URL params (load before slicing)
+# Load URL params first
 params = get_params()
 if "q" in params and not search:
-    try: search = params["q"][0]
+    try: search = params["q"][0] if isinstance(params["q"], list) else str(params["q"])
     except Exception: pass
 if "n" in params:
-    try: topn = int(params["n"][0])
+    try: topn = int(params["n"][0] if isinstance(params["n"], list) else params["n"])
     except Exception: pass
 for key, var in [("wv","w_vol"),("w24","w_m24"),("w7","w_m7"),("wl","w_liq")]:
     if key in params:
         try:
-            val = float(params[key][0])
+            val = params[key][0] if isinstance(params[key], list) else params[key]
+            val = float(val)
             if var in locals(): locals()[var] = val
         except Exception:
             pass
