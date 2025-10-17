@@ -1,4 +1,4 @@
-# ====================== IMPORTS ======================
+ # ====================== IMPORTS ======================
 import math
 import time
 import random
@@ -35,9 +35,9 @@ def _polarity_safe(text: str) -> float:
         return 0.0
 
 # ====================== CONFIG ======================
-APP_NAME = "Crypto Hybrid Live — Phase 4 (Pro)"
+APP_NAME = "Crypto Hybrid Live — Phase 4.1 (Pro + Reload)"
 st.set_page_config(page_title=APP_NAME, layout="wide")
-USER_AGENT = {"User-Agent": "Mozilla/5.0 (CHL-Phase4)"}
+USER_AGENT = {"User-Agent": "Mozilla/5.0 (CHL-Phase4.1)"}
 
 FEATURES = {
     "SPARKLINES": False,   # can enable later
@@ -50,7 +50,7 @@ FEATURES = {
 
 CG_PER_PAGE = 150
 
-# ====================== BIGGER (but clean) UI + THEME ======================
+# ====================== BIGGER (clean) UI + THEME ======================
 if "theme" not in st.session_state:
     st.session_state["theme"] = "dark"
 
@@ -152,7 +152,7 @@ def ensure_profile():
 
 # ====================== HEADER ======================
 st.title("🟢 " + APP_NAME)
-st.caption("Truth > Noise • Phase 4 adds **weight editor**, **quick filters**, **saved presets**, **bigger tables**, **column modes**")
+st.caption("Truth > Noise • Phase 4.1 adds **Reload data** and **Empty-table guard** on top of Pro features")
 
 # ====================== SIDEBAR ======================
 with st.sidebar:
@@ -175,7 +175,6 @@ with st.sidebar:
     st.subheader("Weight Editor")
     prof = ensure_profile()
     w_edit = dict(PRESETS[preset])  # start from preset
-    # sliders (0..1)
     w_edit["w_vol"] = st.slider("Weight: Volume/MarketCap", 0.0, 1.0, float(w_edit["w_vol"]), 0.01)
     w_edit["w_m24"] = st.slider("Weight: Momentum 24h",    0.0, 1.0, float(w_edit["w_m24"]), 0.01)
     w_edit["w_m7"]  = st.slider("Weight: Momentum 7d",     0.0, 1.0, float(w_edit["w_m7"]),  0.01)
@@ -192,7 +191,7 @@ with st.sidebar:
     with cB:
         if st.button("♻️ Reset Weights"):
             prof["weights"] = dict(DEFAULT_WEIGHTS)
-            st.success("Weights reset to default Balanced.")
+            st.success("Weights reset to Balanced default.")
 
     if prof["saved_presets"]:
         sel = st.selectbox("Load saved preset", ["(none)"] + list(prof["saved_presets"].keys()))
@@ -217,7 +216,7 @@ with st.sidebar:
     alert_truth = st.slider("Trigger: Fusion Truth ≥", 0.0, 1.0, 0.85, 0.01)
     alert_div   = st.slider("Trigger: |Raw - Truth| ≥", 0.0, 1.0, 0.30, 0.01)
 
-# ====================== DATA: COINGECKO ======================
+# ====================== DATA HELPERS ======================
 def safe_get(url, params=None, timeout=25, retries=3, backoff=0.6, headers=None):
     h = headers or USER_AGENT
     for i in range(retries):
@@ -245,6 +244,7 @@ def fetch_markets(vs="usd", per_page=CG_PER_PAGE, spark=False):
     try: return pd.DataFrame(r.json())
     except Exception: return pd.DataFrame([])
 
+# ====================== PULL DATA ======================
 df = fetch_markets(vs_currency)
 if df.empty:
     st.error("Could not load data from CoinGecko. Try again in a minute.")
@@ -267,7 +267,7 @@ mc = df["market_cap"].fillna(0)
 df["liquidity01"] = 0 if mc.max()==0 else (mc-mc.min())/(mc.max()-mc.min()+1e-9)
 
 # Truth using edited weights
-TRUTH_W = dict(w_edit)
+TRUTH_W = dict(_normalize_weights(w_edit))
 df["raw_heat"]   = (0.5*(df["vol_to_mc"]/2).clip(0,1) + 0.5*df["momo_1h01"].fillna(0.5)).clip(0,1)
 df["truth_full"] = lipe_truth(df, TRUTH_W)
 df["divergence"] = (df["raw_heat"] - df["truth_full"]).round(3)
@@ -326,4 +326,238 @@ def news_scores(symbols):
     p   = {"auth_token": CP_KEY, "public": "true", "kind":"news", "filter":"hot"}
     r = safe_get(url, params=p, timeout=20)
     if not r:
-        return
+        return pd.DataFrame(columns=["news_hits","news_sent","news01"]).set_index(pd.Index([], name="symbol"))
+    try:
+        titles = [x.get("title","") for x in r.json().get("results", [])]
+    except Exception:
+        titles = []
+    rows=[]
+    for sym in symbols:
+        pat = re.compile(rf"\b{re.escape(sym)}\b")
+        hits = [t for t in titles if pat.search(t.upper())]
+        n=len(hits)
+        pol = float(np.mean([_polarity_safe(t) for t in hits])) if n>0 else 0.0
+        rows.append({"symbol":sym,"news_hits":n,"news_sent":pol})
+    out = pd.DataFrame(rows).set_index("symbol")
+    if out.empty:
+        out["news01"]=[]
+        return out
+    out["hit01"] = (np.log1p(out["news_hits"]) / (np.log1p(out["news_hits"]).max() or 1)).fillna(0.0)
+    out["sent01"] = ((out["news_sent"].clip(-1,1) + 1)/2.0).fillna(0.5)
+    out["news01"] = (0.7*out["hit01"] + 0.3*out["sent01"]).clip(0,1)
+    return out[["news_hits","news_sent","news01"]]
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_defi_protocols():
+    r = safe_get("https://api.llama.fi/protocols", timeout=30)
+    if not r: return pd.DataFrame([])
+    try: return pd.DataFrame(r.json())
+    except Exception: return pd.DataFrame([])
+
+def map_tvl_to_symbols(coins, llama):
+    if llama.empty: return pd.DataFrame({"tvl_score01":[]}).set_index(pd.Index([], name="symbol"))
+    llama = llama[["symbol","tvl"]].fillna({"symbol":""})
+    llama["symbol"] = llama["symbol"].str.upper()
+    agg = llama.groupby("symbol", as_index=True)["tvl"].sum()
+    raw = agg.reindex(coins).fillna(0.0)
+    if raw.max() <= 0:
+        score = pd.Series(0.0, index=raw.index, name="tvl_score01")
+    else:
+        score = (np.log1p(raw) / np.log1p(raw.max())).clip(0,1)
+        score.name = "tvl_score01"
+    return score.to_frame()
+
+# Join external
+df = df.set_index("COIN_SYM")
+if use_social: df = df.join(social_scores(df.index.tolist()), how="left")
+if use_news:   df = df.join(news_scores(df.index.tolist()),   how="left")
+if use_tvl:
+    tvl = map_tvl_to_symbols(df.index.tolist(), fetch_defi_protocols())
+    df = df.join(tvl, how="left")
+
+# Fill external features defaults
+for col, default in [("social01",0.0), ("news01",0.0), ("tvl_score01",0.0)]:
+    if col not in df.columns: df[col] = default
+    df[col] = df[col].fillna(default)
+
+# Fusion
+FW = _normalize_weights(FUSION_WEIGHTS)
+df["fusion_truth"] = (
+    FW["w_truth"]  * df["truth_full"].fillna(0.0) +
+    FW["w_social"] * df["social01"] +
+    FW["w_news"]   * df["news01"] +
+    FW["w_tvl"]    * df["tvl_score01"]
+).clip(0,1)
+df["mood_fusion"] = df["fusion_truth"].apply(mood_label)
+
+# Back to normal columns
+df = df.reset_index().rename(columns={"COIN_SYM":"symbol_up"})
+
+# ---------------------- Quick Filters ----------------------
+if search:
+    mask = df["name"].str.lower().str.contains(search) | df["symbol"].str.lower().str.contains(search)
+    df = df[mask].copy()
+
+if q_large_cap:  df = df.sort_values("market_cap_rank").head(50)
+if q_small_cap:  df = df[df["market_cap_rank"] > 200]
+if q_top_gainers: df = df.sort_values("price_change_percentage_24h_in_currency", ascending=False).head(50)
+if q_top_losers:  df = df.sort_values("price_change_percentage_24h_in_currency", ascending=True).head(50)
+
+# ====================== KPIs + RELOAD ======================
+now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+c1,c2,c3,c4 = st.columns(4)
+c1.metric("Coins", len(df))
+c2.metric("Avg 24h Δ", f"{df['price_change_percentage_24h_in_currency'].mean():+.2f}%")
+c3.metric("Avg LIPE Truth", f"{df['truth_full'].mean():.2f}")
+c4.metric("Avg Fusion Truth", f"{df['fusion_truth'].mean():.2f}")
+st.caption(f"Last update: {now}")
+
+# --- Reload button to force fresh API pull
+reload = st.button("🔄 Reload data (bypass cache)")
+if reload:
+    fetch_markets.clear()              # clear cached function data
+    df = fetch_markets(vs_currency)    # re-fetch immediately
+    st.experimental_rerun()
+
+# --- Show message if filters/search remove all rows (prevents blank screen)
+if df.empty:
+    st.warning(
+        "⚠️ No coins match the current **filters or search term**.\n"
+        "Try clearing the search box, turning off Quick Filters, or hitting Reload."
+    )
+    st.stop()
+
+# ====================== COLUMN MODES ======================
+SIMPLE_COLS_FUSION = ["name","symbol","current_price","fusion_truth","mood_fusion"]
+PRO_COLS_FUSION    = ["name","symbol","current_price","market_cap","fusion_truth","truth_full","social01","news01","tvl_score01","divergence","mood_fusion"]
+SIMPLE_COLS_RAW    = ["name","symbol","current_price","raw_heat","total_volume"]
+PRO_COLS_RAW       = ["name","symbol","current_price","market_cap","total_volume","raw_heat"]
+SIMPLE_COLS_TRUTH  = ["name","symbol","current_price","truth_full","mood"]
+PRO_COLS_TRUTH     = ["name","symbol","current_price","market_cap","liquidity01","truth_full","divergence","entropy01","mood"]
+
+mode_simple = st.toggle("🧸 Easy Mode (simple columns)", value=True)
+HEIGHT = 600
+cols_fusion = SIMPLE_COLS_FUSION if mode_simple else PRO_COLS_FUSION
+cols_raw    = SIMPLE_COLS_RAW    if mode_simple else PRO_COLS_RAW
+cols_truth  = SIMPLE_COLS_TRUTH  if mode_simple else PRO_COLS_TRUTH
+
+# ====================== TABS ======================
+tab_fusion, tab_raw, tab_truth, tab_move, tab_watch, tab_help = st.tabs(
+    ["🧭 Fusion Truth","🔥 Raw","🧭 LIPE Truth","📉 Movers","⭐ Watchlist","❓ Explainer"]
+)
+
+with tab_fusion:
+    st.subheader("🧭 Fusion Truth (LIPE + Social + News + TVL)")
+    st.dataframe(df.sort_values("fusion_truth", ascending=False)[[c for c in cols_fusion if c in df.columns]].reset_index(drop=True),
+                 use_container_width=True, height=HEIGHT)
+
+with tab_raw:
+    st.subheader("🔥 Raw Wide Scan")
+    raw_col = "raw_heat"
+    if raw_col not in df.columns:
+        cands = [c for c in df.columns if c.startswith("raw_heat")]
+        if cands: raw_col = cands[0]
+    st.dataframe(df.sort_values(raw_col, ascending=False)[[c for c in cols_raw if c in df.columns]].reset_index(drop=True),
+                 use_container_width=True, height=HEIGHT)
+
+with tab_truth:
+    st.subheader("🧭 LIPE Truth")
+    st.markdown(
+        "<span class='pill'>Volume/MC</span><span class='pill'>Momentum 24h</span>"
+        "<span class='pill'>Momentum 7d</span><span class='pill'>Liquidity</span>",
+        unsafe_allow_html=True)
+    st.dataframe(df.sort_values("truth_full", ascending=False)[[c for c in cols_truth if c in df.columns]].reset_index(drop=True),
+                 use_container_width=True, height=HEIGHT)
+
+with tab_move:
+    st.subheader("📉 24h Gainers / Losers")
+    g = df.sort_values("price_change_percentage_24h_in_currency", ascending=False).head(15)
+    l = df.sort_values("price_change_percentage_24h_in_currency", ascending=True).head(15)
+    cA, cB = st.columns(2)
+    cA.write("**Top Gainers**")
+    cA.dataframe(g[["name","symbol","current_price","price_change_percentage_24h_in_currency"]].reset_index(drop=True),
+                 use_container_width=True, height=int(HEIGHT/1.4))
+    cB.write("**Top Losers**")
+    cB.dataframe(l[["name","symbol","current_price","price_change_percentage_24h_in_currency"]].reset_index(drop=True),
+                 use_container_width=True, height=int(HEIGHT/1.4))
+
+with tab_watch:
+    st.subheader("⭐ Watchlist")
+    choices = ["(add…)"] + df["symbol"].tolist()
+    pick = st.selectbox("Add a coin to your watchlist", choices, index=0)
+    if pick != "(add…)":
+        wl = set(ensure_profile()["watchlist"]); wl.add(pick.upper())
+        st.session_state["profile"]["watchlist"] = sorted(list(wl))
+        st.success(f"Added **{pick}** to watchlist.")
+    wl = ensure_profile()["watchlist"]
+    if wl:
+        st.markdown("**Your watchlist**")
+        st.dataframe(df[df["symbol"].str.upper().isin(wl)][["name","symbol","current_price","fusion_truth","truth_full","mood_fusion"]],
+                     use_container_width=True, height=int(HEIGHT/1.3))
+    else:
+        st.info("No coins yet. Add some above!")
+
+with tab_help:
+    st.subheader("❓ Truth & Fusion — simple explainer")
+    st.markdown("""
+    **Truth Score** is like judging a car race:
+    - **Volume/MC** = size of the crowd vs track size (busy = real interest)  
+    - **Momentum 24h & 7d** = how fast cars sped up recently  
+    - **Liquidity** = how wide the track is (easy to move)  
+    We mix these into **0..1**. Green = strong, Red = weak.  
+    **Fusion Truth** adds **Social buzz**, **News**, and **TVL** on top of Truth.
+    """)
+    st.info("Tip: use **Presets** and **Weight Editor** in the sidebar to shape the Truth Score your way.")
+
+# ====================== FOCUS COIN (gauge) ======================
+st.markdown("---")
+st.subheader("🎯 Focus coin")
+names = ["(none)"] + df["name"].head(50).tolist()
+pick = st.selectbox("Pick a coin to inspect", names, index=0, key="focus_picker")
+if pick != "(none)" and PLOTLY_OK:
+    row = df[df["name"]==pick].head(1).to_dict("records")[0]
+    st.success(f"**{pick}** → Fusion {row['fusion_truth']:.2f} ({row['mood_fusion']}) • Truth {row['truth_full']:.2f}")
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=float(row["fusion_truth"]),
+        number={'valueformat': '.2f'},
+        gauge={'axis': {'range': [0, 1]}, 'bar': {'color': "#23d18b"}}
+    ))
+    fig.update_layout(height=220, margin=dict(l=10,r=10,t=10,b=10))
+    st.plotly_chart(fig, use_container_width=True)
+elif pick != "(none)":
+    st.info("Plotly not installed yet; gauge hidden.")
+
+# ====================== ALERTS ======================
+if FEATURES["ALERTS"]:
+    hits = df[(df["fusion_truth"] >= alert_truth) | (df["divergence"].abs() >= alert_div)]
+    if len(hits):
+        st.warning(f"🚨 {len(hits)} coins matched your rules")
+        st.dataframe(hits.sort_values("fusion_truth", ascending=False)
+                     [["name","symbol","fusion_truth","truth_full","divergence","mood_fusion"]],
+                     use_container_width=True, height=int(HEIGHT/1.3))
+
+# ====================== SNAPSHOT (CSV) ======================
+def mk_snapshot():
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S_UTC")
+    buf = StringIO()
+    buf.write(f"Snapshot,{ts}\n\nTop by Fusion Truth\n")
+    buf.write(df.sort_values('fusion_truth', ascending=False).head(25)
+              [["name","symbol","current_price","market_cap","fusion_truth","truth_full","social01","news01","tvl_score01","divergence","mood_fusion"]].to_csv(index=False))
+    buf.write("\nTop by Truth\n")
+    buf.write(df.sort_values('truth_full', ascending=False).head(25)
+              [["name","symbol","current_price","market_cap","liquidity01","truth_full","divergence","entropy01","mood"]].to_csv(index=False))
+    buf.write("\nTop by Raw\n")
+    raw_col = "raw_heat" if "raw_heat" in df.columns else next((c for c in df.columns if c.startswith("raw_heat")), "raw_heat")
+    cols_raw_all = [c for c in ["name","symbol","current_price","market_cap","total_volume","raw_heat"] if c in df.columns]
+    buf.write(df.sort_values(raw_col, ascending=False).head(25)[cols_raw_all].to_csv(index=False))
+    return f"snapshot_{ts}.csv", buf.getvalue().encode("utf-8")
+
+if FEATURES["SNAPSHOT"]:
+    fn, payload = mk_snapshot()
+    st.download_button("⬇️ Download Snapshot (Fusion + Truth + Raw)",
+                       payload, file_name=fn, mime="text/csv")
+
+# ====================== FOOTER ======================
+st.markdown("""<hr style="margin-top: 1rem; margin-bottom: 0.5rem;">""", unsafe_allow_html=True)
+st.caption("APIs OK if tables are showing • Source blend: CoinGecko + Reddit + (CryptoPanic if keyed) + DeFiLlama • CHL Phase 4.1 ©")
