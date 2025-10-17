@@ -7,7 +7,6 @@ plotly
 textblob
 nltk
 pillow
-
 # Optional Enhancements
 altair
 pyarrow
@@ -18,17 +17,14 @@ beautifulsoup4
 lxml
 tqdm
 regex
-
 # Visualization & Charts
 matplotlib
 seaborn
 plotly-express
-
 # For future features (AI/NLP integrations)
 transformers
 torch
 sentencepiece
-
 # For optional social/news parsing
 newspaper3k
 html5lib
