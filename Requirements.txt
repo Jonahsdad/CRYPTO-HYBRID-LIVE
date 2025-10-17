@@ -1,4 +1,4 @@
-# Core libraries
+Core libraries
 streamlit
 yfinance
 pandas
@@ -25,12 +25,3 @@ plotly-express
 # Optional AI/NLP integrations
 transformers
 torch
-sentencepiece
-
-# Optional scraping / financial / news
-newspaper3k
-html5lib
-
-# Developer tools
-gitpython
-watchdog
