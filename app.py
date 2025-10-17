@@ -1,4 +1,4 @@
-PHASE 10.1 HYBRID PANEL + STOCKS FIX ==============================
+HYBRID PANEL + STOCKS FIX ==============================
 # t_px*1.2)}px;
         font-weight:900;
         text-align:center;
