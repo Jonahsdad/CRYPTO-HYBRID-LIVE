@@ -1,4 +1,4 @@
-Core libraries
+libraries
 streamlit
 yfinance
 pandas
