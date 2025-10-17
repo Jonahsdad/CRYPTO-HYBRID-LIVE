@@ -1,4 +1,4 @@
-# ============================== PHASE 9 — DISPLAY OPTIMIZATION ==============================
+============================ PHASE 9 — DISPLAY OPTIMIZATION ==============================
 # Crypto Hybrid Live — Phase 9 (UI Enhancement + 4x Visual Tabs + Smooth Flow)
 # Full ready-to-paste file. Replaces your current app.py.
 # ============================================================================================
