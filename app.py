@@ -1,4 +1,4 @@
-# ============================== PHASE 10 — HYBRID PANEL + PREMIUM DISPLAY ==============================
+============================ PHASE 10 — HYBRID PANEL + PREMIUM DISPLAY ==============================
 # Crypto Hybrid Live — Phase 10 (Sidebar Command Panel + Big Tabs + Explain Mode + Compare)
 # Paste this entire file into app.py (no spaces above this line).
 # ======================================================================================================
