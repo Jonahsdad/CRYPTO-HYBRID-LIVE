@@ -1,7 +1,4 @@
-
-
-    # Choose which market you want to analyze
-    src = st.selectbox("Source Table", ["Crypto", "Stocks", "FX", "Unified"], index=0)
+selectbox("Source Table", ["Crypto", "Stocks", "FX", "Unified"], index=0)
 
     # Build the base table
     if src == "Crypto":
