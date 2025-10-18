@@ -1,4 +1,4 @@
-elif nav == "Scores":
+
     st.subheader("🧪 Scores — Truth / Raw / Divergence")
 
     # Choose which market you want to analyze
