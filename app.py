@@ -1,706 +1,267 @@
-HYBRID LIVE — PHASE 14.0 (FULL)
-#  TRUTH/RAW/DIVERGENCE/FUSION global filter + robust spacing + larger UI
-#  Unified Crypto + Stocks + FX + Sentiment + Scores + Signal Center + Export
-#  SmartCache AutoClean™ built-in
-#  Powered by Jesse Ray Landingham Jr
-# ====================================================================================
+# -----------------------------------------------------------------------------
+# Crypto Hybrid Live - Phase 14.3 (FULL)
+# Powered by Jesse Ray Landingham Jr
+# -----------------------------------------------------------------------------
 
-import os, gc, tempfile, time, math, ssl, smtplib
-from email.mime.text import MIMEText
-from datetime import datetime, timezone, timedelta
+import math
+import time
+from datetime import datetime, timezone
 
-import streamlit as st
-import pandas as pd
 import numpy as np
+import pandas as pd
 import requests
-import pytz
+import streamlit as st
 
-# Optional libs (app runs even if a few are missing)
+# Optional: stocks via yfinance (we handle if it's missing)
 try:
     import yfinance as yf
-    YF_OK = True
+    HAS_YF = True
 except Exception:
-    YF_OK = False
+    HAS_YF = False
 
-try:
-    import plotly.express as px
-    import plotly.graph_objects as go
-    PLOTLY_OK = True
-except Exception:
-    PLOTLY_OK = False
+# ------------------------------- UI SETUP ------------------------------------
 
-try:
-    import feedparser
-    FP_OK = True
-except Exception:
-    FP_OK = False
+st.set_page_config(page_title="Crypto Hybrid Live — Phase 14.3", layout="wide")
 
-try:
-    from textblob import TextBlob
-    TB_OK = True
-except Exception:
-    TB_OK = False
+CSS = """
+<style>
+/* big section headers */
+.section-title { font-size: 1.5rem; font-weight: 700; margin: 0.4rem 0 0.2rem 0; }
+/* pill tabs */
+.badge { display:inline-block; padding:0.35rem 0.7rem; border-radius:999px; font-weight:700; }
+.badge-raw { background:#221; color:#ff915e; border:1px solid #ff915e33; }
+.badge-truth { background:#1c261c; color:#7dff96; border:1px solid #7dff9633; }
+.badge-div { background:#1d2230; color:#8ecbff; border:1px solid #8ecbff33; }
+.badge-hot { background:#2a1c1c; color:#ff6a6a; border:1px solid #ff6a6a33; }
+.metric-box { border:1px solid #ffffff22; border-radius:12px; padding:0.8rem; background:#0e1117; }
+.table-note { opacity:0.7; font-size:0.85rem; }
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
 
+# Sidebar controls
+with st.sidebar:
+    st.header("Navigation")
+    nav = st.radio("Go to", ["Dashboard", "Crypto", "Stocks", "Scores", "Signal Center", "Export"], index=0)
 
-# ========================= SmartCache AutoClean™ ====================================
-def smart_cache_clean(max_age_minutes=120):
-    try:
-        cache_dir = tempfile.gettempdir()
-        now = time.time()
-        for root, _, files in os.walk(cache_dir):
-            for f in files:
-                fp = os.path.join(root, f)
-                try:
-                    if os.stat(fp).st_mtime < now - (max_age_minutes * 60):
-                        os.remove(fp)
-                except Exception:
-                    pass
-        gc.collect()
-    except Exception:
-        pass
+    st.header("Appearance")
+    fs = st.slider("Font size", 14, 24, 18)
+    st.markdown(f"<style>html, body, [class*='css'] {{ font-size: {fs}px; }}</style>", unsafe_allow_html=True)
 
-def ensure_periodic_clean():
-    if "last_clean" not in st.session_state:
-        smart_cache_clean()
-        st.session_state["last_clean"] = time.time()
-    elif time.time() - st.session_state["last_clean"] > 900:  # every 15 minutes
-        smart_cache_clean()
-        st.session_state["last_clean"] = time.time()
+    st.header("Watchlist")
+    wl_input = st.text_input("Add symbol (BTC, ETH, AAPL...)", value="")
+    st.caption("Separate with commas. For stocks use tickers like AAPL, MSFT; for crypto use symbols or names.")
 
+    st.header("Refresh")
+    live = st.toggle("Auto Refresh", value=False, help="Re-run periodically")
+    every = st.slider("Every (sec)", 10, 120, 30)
 
-# ========================= App Config & Robust Spacing ===============================
-APP_TITLE = "Crypto Hybrid Live — Phase 14.0"
-st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
+# ------------------------------- DATA LAYERS ---------------------------------
 
-def apply_css(font_px=20, high_contrast=False, dark=True, table_row_px=28):
-    base_bg = "#0b1220" if dark else "#ffffff"
-    base_fg = "#e6edf3" if dark else "#111111"
-    accent  = "#22c55e" if not high_contrast else "#ffdd00"
-    grad_to = "#15803d" if not high_contrast else "#ffaa00"
-    st.markdown(
-        f"""
-        <style>
-        html, body, [class*="css"] {{
-            background:{base_bg}; color:{base_fg}; font-size:{font_px}px;
-        }}
-        .phase-banner {{
-            font-weight:900; text-align:center; color:white;
-            background:linear-gradient(90deg,{accent},{grad_to});
-            border-radius:18px; padding:14px 18px; margin:0 0 18px 0;
-        }}
-        .chip {{ display:inline-block; padding:.35rem .75rem; border-radius:999px; font-weight:800; margin-right:.5rem; }}
-        .ok {{ background:#86efac; color:#111; }} .warn {{ background:#fde047; color:#111; }} .err {{ background:#fda4af; color:#111; }}
-        .kpi-card {{
-            background: rgba(148,163,184,.10);
-            border: 1px solid #334155;
-            border-radius: 16px;
-            padding: 18px 20px;
-            text-align: center;
-            margin-bottom: 16px;
-        }}
-        .kpi-title {{ font-size: 16px; opacity: .9; margin: 0 0 8px 0; }}
-        .kpi-value {{ font-size: 48px; font-weight: 900; margin: 0; }}
-        .kpi-sub   {{ font-size: 15px; opacity: .75; margin: 8px 0 0 0; }}
-        .spacer-xxl {{ height: 22px; }}
-        .spacer-xl  {{ height: 16px; }}
-        .spacer-l   {{ height: 12px; }}
-        .spacer-m   {{ height: 8px; }}
-        .spacer-s   {{ height: 4px; }}
-        div[data-testid="stDataFrame"] div[role="row"] {{
-            height: {table_row_px}px;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-apply_css(font_px=20, table_row_px=30)
-
-
-# ========================= Secrets / Keys (optional) =================================
-ALPHA_V_KEY   = st.secrets.get("ALPHA_VANTAGE_KEY", None)
-DISCORD_HOOK  = st.secrets.get("DISCORD_WEBHOOK_URL", "")
-SMTP_HOST     = st.secrets.get("SMTP_HOST", "")
-SMTP_PORT     = int(st.secrets.get("SMTP_PORT", "587")) if st.secrets.get("SMTP_PORT") else 587
-SMTP_USER     = st.secrets.get("SMTP_USER", "")
-SMTP_PASS     = st.secrets.get("SMTP_PASS", "")
-ALERT_EMAIL_TO= st.secrets.get("ALERT_EMAIL_TO", "")
-
-
-# ========================= Session Init =============================================
-for k, v in {
-    "watchlist": [],
-    "alerts_log": [],
-    "cooldown": {},
-}.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-
-# ========================= Sidebar ===================================================
-st.sidebar.header("Navigation")
-nav = st.sidebar.radio(
-    "Go to",
-    ["Dashboard", "Crypto", "Stocks", "FX", "Scores", "Sentiment", "Signal Center", "Export"],
-    index=0,
-)
-
-st.sidebar.subheader("Global Score Lens")
-# Global TRUTH/RAW/DIVERGENCE/FUSION filter
-score_lens = st.sidebar.radio(
-    "Rank & color tables by",
-    ["Fusion (default)", "Truth", "Raw", "Divergence"],
-    index=0
-)
-
-st.sidebar.subheader("Appearance")
-font_size = st.sidebar.slider("Font size", 16, 28, 20)
-high_contrast = st.sidebar.toggle("High contrast mode", value=False)
-row_h = st.sidebar.slider("Row height", 24, 40, 30)
-apply_css(font_px=font_size, high_contrast=high_contrast, table_row_px=row_h)
-
-st.sidebar.subheader("Watchlist")
-wl_add = st.sidebar.text_input("Add symbol (BTC, ETH, AAPL...)", "")
-if st.sidebar.button("Add"):
-    t = wl_add.strip().upper()
-    if t and t not in st.session_state.watchlist:
-        st.session_state.watchlist.append(t)
-if st.session_state.watchlist:
-    st.sidebar.caption("Saved: " + ", ".join(st.session_state.watchlist))
-
-st.sidebar.subheader("Refresh")
-auto_refresh = st.sidebar.toggle("Auto refresh", value=False)
-every_sec = st.sidebar.slider("Every (sec)", 10, 120, 30, 5)
-if auto_refresh:
-    time.sleep(every_sec)
-
-
-# ========================= Utilities =================================================
-USER_AGENT = {"User-Agent": "CHL-Phase14.0"}
-CGECKO_URL = "https://api.coingecko.com/api/v3/coins/markets"
-
-def chip(kind, text):
-    klass = {"ok":"ok","warn":"warn","err":"err"}.get(kind, "warn")
-    st.markdown(f'<span class="chip {klass}">{text}</span>', unsafe_allow_html=True)
-
-def safe_get(url, params=None, timeout_sec=25):
-    try:
-        r = requests.get(url, params=params, headers=USER_AGENT, timeout=timeout_sec)
-        if r.status_code == 200:
-            return r
-    except Exception:
-        pass
-    return None
-
-def sig_pct_to_01(x):
-    if pd.isna(x): return 0.5
-    return 1.0 / (1.0 + math.exp(-float(x)/10.0))
-
-def norm_weights(w):
-    s = sum(max(0, v) for v in w.values()) or 1.0
-    return {k: max(0, v) / s for k, v in w.items()}
-
-def send_discord(webhook_url, message):
-    try:
-        r = requests.post(webhook_url, json={"content": message}, timeout=15)
-        return r.status_code in (200, 201, 204)
-    except Exception:
-        return False
-
-def send_email(to_email, subject, body):
-    if not (SMTP_HOST and SMTP_USER and SMTP_PASS and to_email): return False
-    try:
-        msg = MIMEText(body); msg["Subject"]=subject; msg["From"]=SMTP_USER; msg["To"]=to_email
-        ctx = ssl.create_default_context()
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.starttls(context=ctx); s.login(SMTP_USER, SMTP_PASS); s.sendmail(SMTP_USER,[to_email],msg.as_string())
-        return True
-    except Exception:
-        return False
-
-
-# ========================= Scoring Weights ==========================================
-BASE_W   = dict(w_vol=0.30, w_m24=0.25, w_m7=0.20, w_liq=0.25)                 # Truth Filter components
-FUSION_W = dict(w_lipe=0.70, w_volatility=0.10, w_sent=0.10, w_fund=0.10)      # Fusion 2.0
-
-
-# ========================= Data Functions ===========================================
-@st.cache_data(ttl=60)
-def cg_markets(vs="usd", limit=150):
+@st.cache_data(ttl=60, show_spinner="Loading crypto markets…")
+def cg_markets(vs="usd", n=250):
+    url = "https://api.coingecko.com/api/v3/coins/markets"
     p = {
-        "vs_currency": vs,
-        "order": "market_cap_desc",
-        "per_page": limit,
-        "page": 1,
-        "sparkline": "false",
-        "price_change_percentage": "1h,24h,7d",
+        "vs_currency": vs, "order": "market_cap_desc",
+        "per_page": min(n, 250), "page": 1,
+        "sparkline": "false", "price_change_percentage": "1h,24h,7d", "locale": "en"
     }
-    r = safe_get(CGECKO_URL, p)
-    return pd.DataFrame(r.json()) if r else pd.DataFrame()
-
-def quick_volatility_01(df):
-    p1 = df.get("price_change_percentage_24h_in_currency", pd.Series(0)).abs()
-    p7 = df.get("price_change_percentage_7d_in_currency", pd.Series(0)).abs()
-    v = (p1.clip(0, 20) + 0.5 * p7.clip(0, 40)) / 30.0
-    return v.clip(0, 1).fillna(0.3)
-
-@st.cache_data(ttl=300)
-def rss_sentiment():
-    if not FP_OK:
-        return 0.5, []
-    feeds = [
-        "https://www.coindesk.com/arc/outboundfeeds/rss/",
-        "https://cointelegraph.com/rss",
-        "https://news.bitcoin.com/feed/",
-        "https://feeds.finance.yahoo.com/rss/2.0/headline?s=^GSPC&region=US&lang=en-US",
+    r = requests.get(url, params=p, timeout=30)
+    r.raise_for_status()
+    df = pd.DataFrame(r.json())
+    if df.empty:
+        return df
+    need = [
+        "name","symbol","current_price","market_cap","total_volume",
+        "price_change_percentage_1h_in_currency",
+        "price_change_percentage_24h_in_currency",
+        "price_change_percentage_7d_in_currency"
     ]
-    titles = []
-    for u in feeds:
+    for k in need:
+        if k not in df.columns:
+            df[k] = np.nan
+    return df
+
+def pct_sigmoid(pct):
+    if pd.isna(pct): return 0.5
+    x = float(pct)/10.0
+    return 1.0/(1.0+math.exp(-x))
+
+def score_crypto(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty: 
+        return df.copy()
+    out = df.copy()
+    out["vol_to_mc"] = (out["total_volume"]/out["market_cap"]).replace([np.inf,-np.inf],np.nan).clip(0,2).fillna(0)
+    out["m1h"] = out["price_change_percentage_1h_in_currency"].apply(pct_sigmoid)
+    out["m24"] = out["price_change_percentage_24h_in_currency"].apply(pct_sigmoid)
+    out["m7d"] = out["price_change_percentage_7d_in_currency"].apply(pct_sigmoid)
+    mc = out["market_cap"].fillna(0)
+    out["liq01"] = 0 if mc.max()==0 else (mc-mc.min())/(mc.max()-mc.min()+1e-9)
+
+    # Raw = quick heat (volume + 1h momentum)
+    out["raw_heat"] = (0.5*(out["vol_to_mc"]/2).clip(0,1) + 0.5*out["m1h"].fillna(0.5)).clip(0,1)
+
+    # Truth = slower, liquidity aware
+    out["truth_full"] = (
+        0.30*(out["vol_to_mc"]/2).clip(0,1) +
+        0.25*out["m24"].fillna(0.5) +
+        0.25*out["m7d"].fillna(0.5) +
+        0.20*out["liq01"].fillna(0.0)
+    ).clip(0,1)
+
+    out["divergence"] = (out["raw_heat"] - out["truth_full"]).abs()
+    return out
+
+# Stocks via yfinance
+@st.cache_data(ttl=120, show_spinner="Loading stocks…")
+def yf_table(tickers: list[str]) -> pd.DataFrame:
+    if not HAS_YF or not tickers:
+        return pd.DataFrame()
+    tickers = [t.strip().upper() for t in tickers if t.strip()]
+    if not tickers:
+        return pd.DataFrame()
+    data = yf.download(tickers=" ".join(tickers), period="5d", interval="1d", group_by="ticker", auto_adjust=True, threads=True, progress=False)
+    rows = []
+    for t in tickers:
         try:
-            d = feedparser.parse(u)
-            for e in d.entries[:20]:
-                titles.append(e.title)
+            s = data[t]
+            last = s.iloc[-1]["Close"]
+            prev = s.iloc[-2]["Close"] if len(s)>=2 else np.nan
+            pct24 = (last/prev-1)*100 if pd.notna(prev) else np.nan
+            rows.append({"symbol": t, "current_price": float(last), "price_change_percentage_24h_in_currency": pct24})
         except Exception:
-            continue
-    if not titles:
-        return 0.5, []
-    if TB_OK:
-        pol = np.mean([TextBlob(t).sentiment.polarity for t in titles])
-        return float((pol + 1)/2), titles[:40]
-    return 0.5, titles[:40]
-
-NEWS_SENTIMENT, NEWS_TITLES = rss_sentiment()
-
-def lipe_truth(df, w=None):
-    w = norm_weights(w or BASE_W)
-    if "liquidity01" not in df:
-        df["liquidity01"] = 0.0
-    if "vol_to_mc" not in df:
-        vol = df.get("total_volume", pd.Series(0, index=df.index))
-        v01 = (vol - vol.min()) / (vol.max() - vol.min() + 1e-9)
-        df["vol_to_mc"] = 2.0 * v01
-    return (
-        w["w_vol"] * (df["vol_to_mc"]/2).clip(0,1) +
-        w["w_m24"] * df.get("momo_24h01", 0.5) +
-        w["w_m7"]  * df.get("momo_7d01", 0.5) +
-        w["w_liq"] * df["liquidity01"]
-    ).clip(0,1)
-
-def fusion_score(df, kind="CRYPTO_OR_STOCK"):
-    lipe = lipe_truth(df)
-    vol01 = quick_volatility_01(df)
-    vol_component = (1.0 - vol01).clip(0, 1)
-    sent_component = float(NEWS_SENTIMENT)
-    fund_component = pd.Series(0.5, index=df.index)  # placeholder for future fundamentals
-    W = norm_weights(FUSION_W)
-    fused = (
-        W["w_lipe"] * lipe +
-        W["w_volatility"] * vol_component +
-        W["w_sent"] * sent_component +
-        W["w_fund"] * fund_component
-    ).clip(0,1)
-    return fused
-
-def build_crypto(vs="usd", limit=150):
-    df = cg_markets(vs, limit)
-    if df.empty: return df
-    df["vol_to_mc"] = (df["total_volume"]/df["market_cap"]).replace([np.inf,-np.inf],np.nan).clip(0,2).fillna(0)
-    df["momo_24h01"] = df["price_change_percentage_24h_in_currency"].apply(sig_pct_to_01)
-    df["momo_7d01"]  = df["price_change_percentage_7d_in_currency"].apply(sig_pct_to_01)
-    mc = df["market_cap"].fillna(0)
-    df["liquidity01"] = 0 if mc.max()==0 else (mc-mc.min())/(mc.max()-mc.min()+1e-9)
-    df["truth_full"] = lipe_truth(df, BASE_W)
-    df["raw_heat"]   = (0.5*(df["vol_to_mc"]/2).clip(0,1) + 0.5*df["momo_24h01"]).clip(0,1)
-    df["divergence"] = (df["raw_heat"] - df["truth_full"]).round(3)
-    df["symbol"]     = df["symbol"].str.upper()
-    df["asset_type"] = "CRYPTO"
-    df["fusion20"]   = fusion_score(df, "CRYPTO")
+            rows.append({"symbol": t, "current_price": np.nan, "price_change_percentage_24h_in_currency": np.nan})
+    df = pd.DataFrame(rows)
+    df["market_cap"] = np.nan
+    df["total_volume"] = np.nan
+    df["price_change_percentage_1h_in_currency"] = np.nan
+    df["price_change_percentage_7d_in_currency"] = np.nan
+    df["name"] = df["symbol"]
     return df
 
-def stocks_demo():
-    rows = [("AAPL",227.4,0.85),("MSFT",424.1,0.65),("NVDA",114.7,-1.2),("AMZN",196.0,0.1),("GOOGL",174.8,-0.4)]
-    df = pd.DataFrame(rows, columns=["symbol","current_price","price_change_percentage_24h_in_currency"])
-    df["total_volume"]=1_000_000; df["market_cap"]=np.nan
-    df["momo_24h01"]=df["price_change_percentage_24h_in_currency"].apply(sig_pct_to_01)
-    df["momo_7d01"]=0.5; df["vol_to_mc"]=0.5; df["liquidity01"]=0.5
-    df["truth_full"]=lipe_truth(df, BASE_W)
-    df["raw_heat"]=(0.5*(df["vol_to_mc"]/2).clip(0,1) + 0.5*df["momo_24h01"]).clip(0,1)
-    df["divergence"]=(df["raw_heat"]-df["truth_full"]).round(3)
-    df["asset_type"]="STOCK"
-    df["fusion20"]=fusion_score(df, "STOCK")
-    return df
+# ------------------------------- VIEWS ---------------------------------------
 
-def build_stocks_or_fx(tickers_csv, period="6mo"):
-    if not YF_OK: return stocks_demo(), "demo"
-    try:
-        tickers = [t.strip().upper() for t in tickers_csv.split(",") if t.strip()]
-        data = yf.download(tickers, period=period, interval="1d", auto_adjust=True, progress=False, threads=True)
-        if data is None or data.empty: return stocks_demo(), "demo"
-        prices = data.get("Adj Close", data).ffill()
-        if isinstance(prices, pd.Series): prices = prices.to_frame(tickers[0])
-        last = prices.iloc[-1]; prev = prices.iloc[-2] if len(prices)>1 else prices.iloc[-1]
-        chg24 = (last/prev - 1.0)*100.0
-        rows = []
-        for t in prices.columns:
-            rows.append({"symbol":t.upper(),"current_price":float(last.get(t,np.nan)),
-                         "price_change_percentage_24h_in_currency":float(chg24.get(t,np.nan))})
-        df = pd.DataFrame(rows)
-        for c in ("total_volume","market_cap"): df[c]=np.nan
-        df["momo_24h01"]=df["price_change_percentage_24h_in_currency"].apply(sig_pct_to_01)
-        df["momo_7d01"]=0.5; df["vol_to_mc"]=0.5; df["liquidity01"]=0.5
-        df["truth_full"]=lipe_truth(df, BASE_W)
-        df["raw_heat"]=(0.5*(df["vol_to_mc"]/2).clip(0,1) + 0.5*df["momo_24h01"]).clip(0,1)
-        df["divergence"]=(df["raw_heat"]-df["truth_full"]).round(3)
-        df["asset_type"]="STOCK/FX"
-        df["fusion20"]=fusion_score(df, "STOCK")
-        return df, "live"
-    except Exception:
-        return stocks_demo(), "demo"
+def header_bar(title: str):
+    st.markdown(f"<div class='section-title'>🟢 {title}</div>", unsafe_allow_html=True)
+    st.caption("Truth → Noise • Live scores. Education only — not financial advice.")
+    st.write(" ")
 
-def unify_frames(frames):
-    cols = ["asset_type","symbol","name","current_price","price_change_percentage_24h_in_currency",
-            "total_volume","market_cap","liquidity01","vol_to_mc","momo_24h01","momo_7d01",
-            "truth_full","raw_heat","divergence","fusion20"]
-    out=[]
-    for f in frames:
-        if f is not None and not f.empty:
-            for c in cols:
-                if c not in f.columns: f[c]=np.nan if c!="asset_type" else ""
-            out.append(f[cols].copy())
-    return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=cols)
+def metrics_bar(df_scored: pd.DataFrame, label: str):
+    coins = len(df_scored)
+    avg24 = df_scored.get("price_change_percentage_24h_in_currency", pd.Series(dtype=float)).mean()
+    avg_truth = df_scored.get("truth_full", pd.Series(dtype=float)).mean()
+    avg_raw = df_scored.get("raw_heat", pd.Series(dtype=float)).mean()
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: st.markdown(f"<div class='metric-box'><b>Assets</b><br>{coins}</div>", unsafe_allow_html=True)
+    with c2: st.markdown(f"<div class='metric-box'><b>Avg 24h %</b><br>{avg24:0.2f}%</div>", unsafe_allow_html=True)
+    with c3: st.markdown(f"<div class='metric-box'><b>Avg Truth</b><br>{(avg_truth if not np.isnan(avg_truth) else 0):0.2f}</div>", unsafe_allow_html=True)
+    with c4: st.markdown(f"<div class='metric-box'><b>Avg Raw</b><br>{(avg_raw if not np.isnan(avg_raw) else 0):0.2f}</div>", unsafe_allow_html=True)
+    st.caption(f"Last update: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} • Mode: {label}")
 
+def truth_raw_tabs(df_scored: pd.DataFrame, topn: int = 50):
+    st.markdown(
+        "<span class='badge badge-raw'>🔥 Raw</span> "
+        "<span class='badge badge-truth'>🧭 Truth</span> "
+        "<span class='badge badge-div'>|Δ| Divergence</span> "
+        "<span class='badge badge-hot'>🚀 Movers</span>",
+        unsafe_allow_html=True
+    )
+    st.write(" ")
 
-# ========================= Header ====================================================
-ensure_periodic_clean()
-st.markdown(
-    f'<div class="phase-banner">🟢 {APP_TITLE}<br/><small>Powered by Jesse Ray Landingham Jr</small></div>',
-    unsafe_allow_html=True
-)
-st.markdown('<div class="spacer-xl"></div>', unsafe_allow_html=True)
-
-
-# ========================= Data Loads by Nav ========================================
-vs_currency="usd"; topn=150
-if nav in ("Dashboard","Crypto","Scores","Signal Center"):
-    crypto_df = build_crypto(vs_currency, topn)
-else:
-    crypto_df = pd.DataFrame()
-
-if nav in ("Dashboard","Stocks","Scores","Signal Center"):
-    stocks_default="AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA"
-    tickers = st.sidebar.text_input("Stocks (comma-separated)", stocks_default)
-    stocks_df, stocks_mode = build_stocks_or_fx(tickers)
-else:
-    stocks_df, stocks_mode = pd.DataFrame(), "demo"
-
-if nav in ("Dashboard","FX","Scores","Signal Center"):
-    fx_default="EURUSD=X,USDJPY=X,GBPUSD=X,AUDUSD=X,USDCAD=X"
-    fx_pairs = st.sidebar.text_input("FX pairs (Yahoo symbols)", fx_default)
-    fx_df, fx_mode = build_stocks_or_fx(fx_pairs)
-else:
-    fx_df, fx_mode = pd.DataFrame(), "demo"
-
-
-# ========================= Lens Helpers =============================================
-def lens_key():
-    return {"Fusion (default)":"fusion20", "Truth":"truth_full", "Raw":"raw_heat", "Divergence":"divergence"}[score_lens]
-
-def lens_sort(df):
-    key = lens_key()
-    if key not in df.columns: return df
-    # Divergence: still show largest positive first (same as others)
-    return df.sort_values(key, ascending=False)
-
-def kpi_row(df):
-    st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
-    if df is None or df.empty:
-        c1,c2,c3 = st.columns(3)
-        for c in (c1,c2,c3):
-            with c:
-                st.markdown('<div class="kpi-card"><div class="kpi-title">No Data</div><p class="kpi-value">—</p><div class="kpi-sub">—</div></div>', unsafe_allow_html=True)
-        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
-        return
-    t = pd.to_numeric(df.get("truth_full", pd.Series()), errors="coerce")
-    r = pd.to_numeric(df.get("raw_heat", pd.Series()), errors="coerce")
-    d = pd.to_numeric(df.get("divergence", pd.Series()), errors="coerce")
-    t_avg = np.nanmean(t) if len(t) else np.nan
-    r_avg = np.nanmean(r) if len(r) else np.nan
-    d_avg = np.nanmean(np.abs(d)) if len(d) else np.nan
     c1,c2,c3 = st.columns(3)
+
     with c1:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-title">Truth (Avg)</div><p class="kpi-value">{t_avg:.2f}</p><div class="kpi-sub">Liquidity + stability</div></div>', unsafe_allow_html=True)
+        st.subheader("Raw Wide Scan")
+        cols = ["name","symbol","current_price","market_cap","total_volume","raw_heat"]
+        st.dataframe(df_scored.sort_values("raw_heat", ascending=False).head(topn)[[c for c in cols if c in df_scored.columns]], use_container_width=True)
+
     with c2:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-title">Raw (Avg)</div><p class="kpi-value">{r_avg:.2f}</p><div class="kpi-sub">Momentum + volume</div></div>', unsafe_allow_html=True)
+        st.subheader("Truth Filter")
+        cols = ["name","symbol","current_price","market_cap","truth_full"]
+        st.dataframe(df_scored.sort_values("truth_full", ascending=False).head(topn)[[c for c in cols if c in df_scored.columns]], use_container_width=True)
+
     with c3:
-        st.markdown(f'<div class="kpi-card"><div class="kpi-title">|Δ| (Avg)</div><p class="kpi-value">{d_avg:.3f}</p><div class="kpi-sub">Gap: Raw − Truth</div></div>', unsafe_allow_html=True)
-    st.markdown('<div class="spacer-xl"></div>', unsafe_allow_html=True)
+        st.subheader("Top Daily Gainers / Losers")
+        if "price_change_percentage_24h_in_currency" in df_scored.columns:
+            g = df_scored.sort_values("price_change_percentage_24h_in_currency", ascending=False).head(10)
+            l = df_scored.sort_values("price_change_percentage_24h_in_currency", ascending=True).head(10)
+            st.markdown("**Top Gainers**")
+            st.dataframe(g[["name","symbol","current_price","price_change_percentage_24h_in_currency"]], use_container_width=True)
+            st.markdown("**Top Losers**")
+            st.dataframe(l[["name","symbol","current_price","price_change_percentage_24h_in_currency"]], use_container_width=True)
+        else:
+            st.info("No 24h % column available.")
 
+def page_crypto():
+    header_bar("Crypto Hybrid Live — Crypto")
+    topn = st.sidebar.slider("Show top N (Crypto)", 50, 250, 150)
+    df = cg_markets("usd", topn)
+    df_scored = score_crypto(df)
+    metrics_bar(df_scored, "Crypto")
+    truth_raw_tabs(df_scored, topn=20)
 
-# ========================= Pages =====================================================
+def page_stocks():
+    header_bar("Crypto Hybrid Live — Stocks")
+    default = "AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA"
+    raw = st.sidebar.text_input("Stocks (comma-separated)", value=default)
+    tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
+    if not HAS_YF:
+        st.error("yfinance is not installed. Add `yfinance` to requirements.txt, then reboot the app.")
+        return
+    df = yf_table(tickers)
+    if df.empty:
+        st.warning("No data loaded. Check tickers.")
+        return
+    # Reuse crypto scorer (it tolerates missing cols)
+    df_scored = score_crypto(df)
+    metrics_bar(df_scored, "Stocks")
+    truth_raw_tabs(df_scored, topn=min(20, len(df_scored)))
+
+def page_dashboard():
+    header_bar("Crypto Hybrid Live — Dashboard")
+    # Quick glance: top crypto truth and raw
+    df = score_crypto(cg_markets("usd", 200))
+    c1,c2 = st.columns(2)
+    with c1:
+        st.subheader("Top Truth (Crypto)")
+        st.dataframe(df.sort_values("truth_full", ascending=False).head(15)[["name","symbol","current_price","truth_full"]], use_container_width=True)
+    with c2:
+        st.subheader("Top Raw (Crypto)")
+        st.dataframe(df.sort_values("raw_heat", ascending=False).head(15)[["name","symbol","current_price","raw_heat"]], use_container_width=True)
+
+def page_scores():
+    header_bar("Scores — Explainer")
+    st.markdown("""
+**Raw** ≈ fast heat from **Volume/MarketCap** and **1h momentum**.  
+**Truth** ≈ slower, more stable score from **volume/MC**, **24h momentum**, **7d momentum**, and **market-cap liquidity**.  
+**Divergence** = |Raw − Truth| (possible over-extension or mean reversion).
+""")
+
+def page_signal_center():
+    header_bar("Signal Center (basic demo)")
+    st.info("Build rule-based alerts here in the next phase (webhooks, email, Discord).")
+
+def page_export():
+    header_bar("Export")
+    st.info("CSV export will be added here in the next phase.")
+
+# ------------------------------- ROUTING -------------------------------------
+
 if nav == "Dashboard":
-    st.subheader("📊 Unified Market Snapshot")
-    sent_kind = "ok" if NEWS_SENTIMENT>=0.6 else "warn" if NEWS_SENTIMENT>=0.4 else "err"
-    chip("ok", f"Crypto: {'ok' if not crypto_df.empty else 'empty'}")
-    chip("ok" if stocks_mode=="live" else "warn", f"Stocks: {stocks_mode}")
-    chip("ok" if fx_mode=="live" else "warn", f"FX: {fx_mode}")
-    chip(sent_kind, f"Sentiment: {NEWS_SENTIMENT:.2f}")
-
-    uni = unify_frames([crypto_df, stocks_df, fx_df])
-    kpi_row(uni)
-
-    if uni.empty:
-        st.error("No data loaded.")
-    else:
-        st.markdown(f"**Ranking by:** `{lens_key()}`")
-        st.dataframe(
-            lens_sort(uni)[
-                ["asset_type","symbol","name","current_price","price_change_percentage_24h_in_currency",
-                 "truth_full","raw_heat","divergence","fusion20","liquidity01","vol_to_mc"]
-            ],
-            use_container_width=True, height=620
-        )
-
+    page_dashboard()
 elif nav == "Crypto":
-    st.subheader("💎 Crypto Market")
-    if crypto_df.empty:
-        st.error("No crypto data.")
-    else:
-        kpi_row(crypto_df)
-        st.markdown(f"**Ranking by:** `{lens_key()}`")
-        b = lens_sort(crypto_df)
-        st.dataframe(
-            b[["symbol","name","current_price","price_change_percentage_24h_in_currency",
-                "truth_full","raw_heat","divergence","fusion20","liquidity01","vol_to_mc"]],
-            use_container_width=True, height=640
-        )
-        st.markdown('<div class="spacer-xl"></div>', unsafe_allow_html=True)
-        if PLOTLY_OK:
-            fig = px.scatter(b, x="truth_full", y="raw_heat", text="symbol",
-                             color="divergence", color_continuous_scale="Turbo")
-            fig.update_traces(textposition="top center")
-            fig.update_layout(height=560)
-            st.plotly_chart(fig, use_container_width=True)
-
+    page_crypto()
 elif nav == "Stocks":
-    st.subheader("📈 Stock Market")
-    chip("ok" if stocks_mode=="live" else "warn", f"Source: {stocks_mode}")
-    if stocks_df.empty:
-        st.error("No stocks data.")
-    else:
-        kpi_row(stocks_df)
-        st.markdown(f"**Ranking by:** `{lens_key()}`")
-        b = lens_sort(stocks_df)
-        st.dataframe(
-            b[["symbol","current_price","price_change_percentage_24h_in_currency",
-               "truth_full","raw_heat","divergence","fusion20"]],
-            use_container_width=True, height=640
-        )
-
-elif nav == "FX":
-    st.subheader("💱 Forex Market (Preview)")
-    chip("ok" if fx_mode=="live" else "warn", f"Source: {fx_mode}")
-    if fx_df.empty:
-        st.error("No FX data.")
-    else:
-        kpi_row(fx_df)
-        st.markdown(f"**Ranking by:** `{lens_key()}`")
-        b = lens_sort(fx_df)
-        st.dataframe(
-            b[["symbol","current_price","price_change_percentage_24h_in_currency",
-               "truth_full","raw_heat","divergence","fusion20"]],
-            use_container_width=True, height=640
-        )
-
+    page_stocks()
 elif nav == "Scores":
-    st.subheader("🏁 Scores — Truth / Raw / Divergence (Global Lens Active)")
-    src = st.selectbox("Source Table", ["Crypto","Stocks","FX","Unified"], index=0)
-    if src == "Crypto": base = crypto_df
-    elif src == "Stocks": base = stocks_df
-    elif src == "FX": base = fx_df
-    else: base = unify_frames([crypto_df, stocks_df, fx_df])
-
-    kpi_row(base)
-    if base is None or base.empty:
-        st.warning("No data available for the selected source.")
-    else:
-        st.markdown(f"**Ranking by:** `{lens_key()}`")
-        base = lens_sort(base)
-
-        st.markdown("#### Truth (ranked)")
-        cols_t = [c for c in ["asset_type","symbol","name","current_price",
-                              "price_change_percentage_24h_in_currency","truth_full","liquidity01","vol_to_mc"] if c in base.columns]
-        st.dataframe(base.sort_values("truth_full", ascending=False)[cols_t], use_container_width=True, height=320)
-
-        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
-        st.markdown("#### Raw (ranked)")
-        cols_r = [c for c in ["asset_type","symbol","current_price",
-                              "price_change_percentage_24h_in_currency","raw_heat","vol_to_mc","momo_24h01"] if c in base.columns]
-        st.dataframe(base.sort_values("raw_heat", ascending=False)[cols_r], use_container_width=True, height=320)
-
-        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
-        st.markdown("#### Divergence (ranked)")
-        cols_d = [c for c in ["asset_type","symbol","current_price","divergence",
-                              "truth_full","raw_heat","price_change_percentage_24h_in_currency"] if c in base.columns]
-        st.dataframe(base.sort_values("divergence", ascending=False)[cols_d], use_container_width=True, height=320)
-
-        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
-        if PLOTLY_OK:
-            fig = px.scatter(base, x="truth_full", y="raw_heat", text="symbol",
-                             color="divergence", color_continuous_scale="Turbo")
-            fig.update_traces(textposition="top center")
-            fig.update_layout(height=560)
-            st.plotly_chart(fig, use_container_width=True)
-
-elif nav == "Sentiment":
-    st.subheader("🧠 Market News & Sentiment")
-    kind = "ok" if NEWS_SENTIMENT>=0.6 else "warn" if NEWS_SENTIMENT>=0.4 else "err"
-    chip(kind, f"Aggregate Sentiment: {NEWS_SENTIMENT:.2f}")
-    st.progress(min(max(NEWS_SENTIMENT, 0.0), 1.0))
-    st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
-    if NEWS_TITLES:
-        st.markdown("Recent Headlines (sample):")
-        for t in NEWS_TITLES[:25]:
-            st.write("•", t)
-    else:
-        st.caption("Sentiment libs not installed; using neutral baseline.")
-
+    page_scores()
 elif nav == "Signal Center":
-    st.subheader("🚦 Signal Center — Rules & Alerts (Lens-aware)")
-    src = st.selectbox("Source Table", ["Unified (Crypto+Stocks+FX)", "Crypto only", "Stocks only", "FX only"], index=0)
-    if src == "Crypto only": base = crypto_df
-    elif src == "Stocks only": base = stocks_df
-    elif src == "FX only": base = fx_df
-    else: base = unify_frames([crypto_df, stocks_df, fx_df])
-
-    if base is None or base.empty:
-        st.warning("No data available for selected source.")
-    else:
-        A,B,C = st.columns(3)
-        with A:
-            thr_fusion = st.slider("Fusion 2.0 >=", 0.0, 1.0, 0.82, 0.01)
-            thr_truth  = st.slider("Truth >=", 0.0, 1.0, 0.75, 0.01)
-        with B:
-            thr_24h    = st.slider("24h % >=", -10.0, 15.0, 0.0, 0.1)
-            thr_absdiv = st.slider("|Divergence| >=", 0.0, 1.0, 0.28, 0.01)
-        with C:
-            min_price  = st.number_input("Min price (opt.)", value=0.0, min_value=0.0, step=0.01, format="%.2f")
-            only_watch = st.toggle("Filter to Watchlist only", value=False)
-
-        q = base.copy()
-        if "price_change_percentage_24h_in_currency" not in q:
-            q["price_change_percentage_24h_in_currency"] = 0.0
-        q["abs_div"] = q["divergence"].abs()
-        mask = (
-            (q["fusion20"] >= thr_fusion) &
-            (q["truth_full"] >= thr_truth) &
-            (q["price_change_percentage_24h_in_currency"] >= thr_24h) &
-            (q["abs_div"] >= thr_absdiv) &
-            (q["current_price"] >= min_price)
-        )
-        if only_watch and st.session_state.watchlist:
-            mask = mask & (q["symbol"].isin([s.upper() for s in st.session_state.watchlist]))
-
-        hits = lens_sort(q[mask]).sort_values(["fusion20","abs_div","truth_full"], ascending=False)
-        st.success(f"Matches: {len(hits)}")
-        if len(hits):
-            st.dataframe(
-                hits[["asset_type","symbol","current_price","fusion20","truth_full","raw_heat","divergence",
-                      "price_change_percentage_24h_in_currency"]],
-                use_container_width=True, height=460,
-            )
-        else:
-            st.info("No matches. Adjust thresholds or watchlist.")
-
-        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
-        st.subheader("Delivery")
-        col1,col2 = st.columns(2)
-        with col1:
-            hook = st.text_input("Discord Webhook URL", value=DISCORD_HOOK, type="password")
-            enable_discord = st.toggle("Enable Discord alerts", value=bool(hook))
-        with col2:
-            email_to = st.text_input("Alert Email To", value=ALERT_EMAIL_TO)
-            enable_email = st.toggle("Enable Email alerts", value=bool(SMTP_HOST and SMTP_USER and SMTP_PASS and email_to))
-
-        cooldown_min = st.slider("Cooldown per symbol (min)", 1, 240, 30, 1)
-        if st.button("Send Alerts Now") and len(hits):
-            sent = 0
-            for _, r in hits.iterrows():
-                key = f"{r['symbol']}"
-                last = st.session_state.cooldown.get(key, None)
-                now = datetime.now(timezone.utc)
-                if last and (now - last) < timedelta(minutes=cooldown_min):
-                    continue
-                msg = (
-                    f"CHL v14.0 Signal — {r['asset_type']} {r['symbol']}\n"
-                    f"Price: {r['current_price']:.4g}\n"
-                    f"Fusion20: {r['fusion20']:.3f} | Truth: {r['truth_full']:.3f} | Raw: {r['raw_heat']:.3f}\n"
-                    f"Delta (Raw-Truth): {r['divergence']:+.3f} | 24h%: {r['price_change_percentage_24h_in_currency']:.2f}%\n"
-                    f"Sentiment: {NEWS_SENTIMENT:.2f} | Time: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}"
-                )
-                ok = True
-                if enable_discord and hook: ok = ok and send_discord(hook, msg)
-                if enable_email and email_to: ok = ok and send_email(email_to, subject=f"CHL v14.0 — {r['symbol']}", body=msg)
-                if ok:
-                    st.session_state.cooldown[key] = now
-                    st.session_state.alerts_log.append(
-                        {"ts": now.strftime("%Y-%m-%d %H:%M:%S UTC"),
-                         "symbol": r["symbol"],
-                         "fusion20": float(r["fusion20"]),
-                         "truth": float(r["truth_full"]),
-                         "raw": float(r["raw_heat"]),
-                         "div": float(r["divergence"])}
-                    )
-                    sent += 1
-            st.success(f"Alerts sent: {sent}")
-
-        st.markdown("Recent Alerts Log")
-        if st.session_state.alerts_log:
-            log_df = pd.DataFrame(st.session_state.alerts_log)
-            st.dataframe(log_df.sort_values("ts", ascending=False), use_container_width=True, height=260)
-        else:
-            st.caption("No alert logs yet.")
-
-elif nav == "Export":
-    st.subheader("📤 Export Data")
-    choice = st.selectbox("Table", ["Crypto","Stocks","FX","Unified"])
-    if choice == "Crypto": data = crypto_df
-    elif choice == "Stocks": data = stocks_df
-    elif choice == "FX": data = fx_df
-    else: data = unify_frames([crypto_df, stocks_df, fx_df])
-
-    if data is None or data.empty:
-        st.warning("Nothing to export.")
-    else:
-        csv = data.to_csv(index=False).encode("utf-8")
-        st.download_button("Download CSV", csv, file_name=f"chl_{choice.lower()}.csv", mime="text/csv")
-
-
-# ========================= Watchlist Pills ==========================================
-st.markdown('<div class="spacer-xl"></div>', unsafe_allow_html=True)
-st.markdown("### Watchlist Signals")
-wl = [s.upper() for s in st.session_state.watchlist]
-cur = unify_frames([crypto_df, stocks_df, fx_df])
-if wl and cur is not None and not cur.empty:
-    sub = cur[cur["symbol"].isin(wl)][["symbol","current_price","truth_full","raw_heat","divergence","fusion20"]].copy()
-    if sub.empty:
-        st.caption("Your watchlist symbols are not in the current tables.")
-    else:
-        pills=[]
-        for _, r in sub.iterrows():
-            sign = "ok" if r["divergence"] >= 0 else "err"
-            pills.append(
-                f'<span class="chip {sign}"><b>{r["symbol"]}</b> · ${r["current_price"]:.4g} · '
-                f'F:{r["fusion20"]:.2f} · T:{r["truth_full"]:.2f} · R:{r["raw_heat"]:.2f} · Δ {r["divergence"]:+.2f}</span>'
-            )
-        st.markdown(" ".join(pills), unsafe_allow_html=True)
+    page_signal_center()
 else:
-    st.caption("Add symbols in the sidebar (BTC, ETH, AAPL, etc.)")
+    page_export()
 
-
-# ========================= Footer ====================================================
-st.markdown('<div class="spacer-xxl"></div>', unsafe_allow_html=True)
-st.divider()
-st.markdown(
-    "<p style='text-align:center; font-size:16px;'>© 2025 Jesse Ray Landingham Jr | Phase 14.0 | Global Lens: Truth / Raw / Divergence</p>",
-    unsafe_allow_html=True
-)
+# Optional auto-refresh loop (client-side re-run)
+if live:
+    st.caption(f"Auto refresh every {every}s is ON.")
+    time.sleep(max(5, int(every)))
+    st.rerun()
