@@ -1,5 +1,4 @@
-# -----------------------------------------------------------------------------
-# Crypto Hybrid Live — Phase 15 (FULL, Color-Coded TRUTH/RAW/DELTA)
+Hybrid Live — Phase 15 (FULL, Color-Coded TRUTH/RAW/DELTA)
 # Powered by Jesse Ray Landingham Jr
 # -----------------------------------------------------------------------------
 # This file is complete & standalone. Replace your repo's app.py with this file.
