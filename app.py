@@ -1,5 +1,4 @@
 
-    st.subheader("🧪 Scores — Truth / Raw / Divergence")
 
     # Choose which market you want to analyze
     src = st.selectbox("Source Table", ["Crypto", "Stocks", "FX", "Unified"], index=0)
