@@ -1,6 +1,6 @@
-# ====================================================================================
-#  CRYPTO HYBRID LIVE — PHASE 13.7 (FULL)
-#  Adds GLOBAL Truth / Raw / Divergence FILTER + Big KPI boards on every page
+ # ====================================================================================
+#  CRYPTO HYBRID LIVE — PHASE 14.0 (FULL)
+#  TRUTH/RAW/DIVERGENCE/FUSION global filter + robust spacing + larger UI
 #  Unified Crypto + Stocks + FX + Sentiment + Scores + Signal Center + Export
 #  SmartCache AutoClean™ built-in
 #  Powered by Jesse Ray Landingham Jr
@@ -16,7 +16,7 @@ import numpy as np
 import requests
 import pytz
 
-# Optional libs (app still runs if missing)
+# Optional libs (app runs even if a few are missing)
 try:
     import yfinance as yf
     YF_OK = True
@@ -64,17 +64,17 @@ def ensure_periodic_clean():
     if "last_clean" not in st.session_state:
         smart_cache_clean()
         st.session_state["last_clean"] = time.time()
-    elif time.time() - st.session_state["last_clean"] > 900:
+    elif time.time() - st.session_state["last_clean"] > 900:  # every 15 minutes
         smart_cache_clean()
         st.session_state["last_clean"] = time.time()
 
 
-# ========================= App Config & Styles ======================================
-APP_TITLE = "Crypto Hybrid Live — Phase 13.7"
+# ========================= App Config & Robust Spacing ===============================
+APP_TITLE = "Crypto Hybrid Live — Phase 14.0"
 st.set_page_config(page_title=APP_TITLE, layout="wide", initial_sidebar_state="expanded")
 
-def apply_css(font_px=18, high_contrast=False, dark=True):
-    base_bg = "#0d1117" if dark else "#ffffff"
+def apply_css(font_px=20, high_contrast=False, dark=True, table_row_px=28):
+    base_bg = "#0b1220" if dark else "#ffffff"
     base_fg = "#e6edf3" if dark else "#111111"
     accent  = "#22c55e" if not high_contrast else "#ffdd00"
     grad_to = "#15803d" if not high_contrast else "#ffaa00"
@@ -87,26 +87,35 @@ def apply_css(font_px=18, high_contrast=False, dark=True):
         .phase-banner {{
             font-weight:900; text-align:center; color:white;
             background:linear-gradient(90deg,{accent},{grad_to});
-            border-radius:14px; padding:.6rem .8rem; margin:0 0 1rem 0;
+            border-radius:18px; padding:14px 18px; margin:0 0 18px 0;
         }}
-        .chip {{ display:inline-block; padding:.25rem .6rem; border-radius:999px; font-weight:700; margin-right:.35rem; }}
+        .chip {{ display:inline-block; padding:.35rem .75rem; border-radius:999px; font-weight:800; margin-right:.5rem; }}
         .ok {{ background:#86efac; color:#111; }} .warn {{ background:#fde047; color:#111; }} .err {{ background:#fda4af; color:#111; }}
         .kpi-card {{
-            background: rgba(148,163,184,.08);
+            background: rgba(148,163,184,.10);
             border: 1px solid #334155;
-            border-radius: 14px;
-            padding: 16px 18px;
+            border-radius: 16px;
+            padding: 18px 20px;
             text-align: center;
+            margin-bottom: 16px;
         }}
-        .kpi-title {{ font-size: 14px; opacity: .9; margin: 0 0 6px 0; }}
-        .kpi-value {{ font-size: 42px; font-weight: 900; margin: 0; }}
-        .kpi-sub   {{ font-size: 14px; opacity: .75; margin: 6px 0 0 0; }}
+        .kpi-title {{ font-size: 16px; opacity: .9; margin: 0 0 8px 0; }}
+        .kpi-value {{ font-size: 48px; font-weight: 900; margin: 0; }}
+        .kpi-sub   {{ font-size: 15px; opacity: .75; margin: 8px 0 0 0; }}
+        .spacer-xxl {{ height: 22px; }}
+        .spacer-xl  {{ height: 16px; }}
+        .spacer-l   {{ height: 12px; }}
+        .spacer-m   {{ height: 8px; }}
+        .spacer-s   {{ height: 4px; }}
+        div[data-testid="stDataFrame"] div[role="row"] {{
+            height: {table_row_px}px;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-apply_css()
+apply_css(font_px=20, table_row_px=30)
 
 
 # ========================= Secrets / Keys (optional) =================================
@@ -137,18 +146,19 @@ nav = st.sidebar.radio(
     index=0,
 )
 
-st.sidebar.subheader("Score Lens (Global)")
-# NEW: Global Truth / Raw / Divergence filter
+st.sidebar.subheader("Global Score Lens")
+# Global TRUTH/RAW/DIVERGENCE/FUSION filter
 score_lens = st.sidebar.radio(
-    "Choose how to rank & highlight",
+    "Rank & color tables by",
     ["Fusion (default)", "Truth", "Raw", "Divergence"],
     index=0
 )
 
 st.sidebar.subheader("Appearance")
-font_size = st.sidebar.slider("Font size", 14, 26, 18)
+font_size = st.sidebar.slider("Font size", 16, 28, 20)
 high_contrast = st.sidebar.toggle("High contrast mode", value=False)
-apply_css(font_size, high_contrast, True)
+row_h = st.sidebar.slider("Row height", 24, 40, 30)
+apply_css(font_px=font_size, high_contrast=high_contrast, table_row_px=row_h)
 
 st.sidebar.subheader("Watchlist")
 wl_add = st.sidebar.text_input("Add symbol (BTC, ETH, AAPL...)", "")
@@ -167,7 +177,7 @@ if auto_refresh:
 
 
 # ========================= Utilities =================================================
-USER_AGENT = {"User-Agent": "CHL-Phase13.7"}
+USER_AGENT = {"User-Agent": "CHL-Phase14.0"}
 CGECKO_URL = "https://api.coingecko.com/api/v3/coins/markets"
 
 def chip(kind, text):
@@ -211,8 +221,8 @@ def send_email(to_email, subject, body):
 
 
 # ========================= Scoring Weights ==========================================
-BASE_W   = dict(w_vol=0.30, w_m24=0.25, w_m7=0.20, w_liq=0.25)     # Truth Filter components
-FUSION_W = dict(w_lipe=0.70, w_volatility=0.10, w_sent=0.10, w_fund=0.10)  # Fusion 2.0
+BASE_W   = dict(w_vol=0.30, w_m24=0.25, w_m7=0.20, w_liq=0.25)                 # Truth Filter components
+FUSION_W = dict(w_lipe=0.70, w_volatility=0.10, w_sent=0.10, w_fund=0.10)      # Fusion 2.0
 
 
 # ========================= Data Functions ===========================================
@@ -282,7 +292,7 @@ def fusion_score(df, kind="CRYPTO_OR_STOCK"):
     vol01 = quick_volatility_01(df)
     vol_component = (1.0 - vol01).clip(0, 1)
     sent_component = float(NEWS_SENTIMENT)
-    fund_component = pd.Series(0.5, index=df.index)  # placeholder (fundamentals optional)
+    fund_component = pd.Series(0.5, index=df.index)  # placeholder for future fundamentals
     W = norm_weights(FUSION_W)
     fused = (
         W["w_lipe"] * lipe +
@@ -367,6 +377,7 @@ st.markdown(
     f'<div class="phase-banner">🟢 {APP_TITLE}<br/><small>Powered by Jesse Ray Landingham Jr</small></div>',
     unsafe_allow_html=True
 )
+st.markdown('<div class="spacer-xl"></div>', unsafe_allow_html=True)
 
 
 # ========================= Data Loads by Nav ========================================
@@ -391,24 +402,24 @@ else:
     fx_df, fx_mode = pd.DataFrame(), "demo"
 
 
-# ========================= Helpers: Lens ============================================
-def lens_title():
+# ========================= Lens Helpers =============================================
+def lens_key():
     return {"Fusion (default)":"fusion20", "Truth":"truth_full", "Raw":"raw_heat", "Divergence":"divergence"}[score_lens]
 
-def sort_with_lens(df):
-    key = lens_title()
-    asc = False if key != "divergence" else False  # still show largest positive divergence first
-    if key not in df.columns:
-        return df
-    return df.sort_values(key, ascending=asc)
+def lens_sort(df):
+    key = lens_key()
+    if key not in df.columns: return df
+    # Divergence: still show largest positive first (same as others)
+    return df.sort_values(key, ascending=False)
 
 def kpi_row(df):
-    # Big KPI cards for Truth/Raw/Divergence (averages)
+    st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
     if df is None or df.empty:
         c1,c2,c3 = st.columns(3)
         for c in (c1,c2,c3):
             with c:
                 st.markdown('<div class="kpi-card"><div class="kpi-title">No Data</div><p class="kpi-value">—</p><div class="kpi-sub">—</div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
         return
     t = pd.to_numeric(df.get("truth_full", pd.Series()), errors="coerce")
     r = pd.to_numeric(df.get("raw_heat", pd.Series()), errors="coerce")
@@ -423,6 +434,7 @@ def kpi_row(df):
         st.markdown(f'<div class="kpi-card"><div class="kpi-title">Raw (Avg)</div><p class="kpi-value">{r_avg:.2f}</p><div class="kpi-sub">Momentum + volume</div></div>', unsafe_allow_html=True)
     with c3:
         st.markdown(f'<div class="kpi-card"><div class="kpi-title">|Δ| (Avg)</div><p class="kpi-value">{d_avg:.3f}</p><div class="kpi-sub">Gap: Raw − Truth</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="spacer-xl"></div>', unsafe_allow_html=True)
 
 
 # ========================= Pages =====================================================
@@ -440,11 +452,14 @@ if nav == "Dashboard":
     if uni.empty:
         st.error("No data loaded.")
     else:
-        st.markdown(f"**Ranking by:** `{lens_title()}`")
-        st.dataframe(sort_with_lens(uni)[
-            ["asset_type","symbol","name","current_price","price_change_percentage_24h_in_currency",
-             "truth_full","raw_heat","divergence","fusion20","liquidity01","vol_to_mc"]
-        ], use_container_width=True, height=600)
+        st.markdown(f"**Ranking by:** `{lens_key()}`")
+        st.dataframe(
+            lens_sort(uni)[
+                ["asset_type","symbol","name","current_price","price_change_percentage_24h_in_currency",
+                 "truth_full","raw_heat","divergence","fusion20","liquidity01","vol_to_mc"]
+            ],
+            use_container_width=True, height=620
+        )
 
 elif nav == "Crypto":
     st.subheader("💎 Crypto Market")
@@ -452,16 +467,19 @@ elif nav == "Crypto":
         st.error("No crypto data.")
     else:
         kpi_row(crypto_df)
-        st.markdown(f"**Ranking by:** `{lens_title()}`")
-        b = sort_with_lens(crypto_df)
-        st.dataframe(b[
-            ["symbol","name","current_price","price_change_percentage_24h_in_currency",
-             "truth_full","raw_heat","divergence","fusion20","liquidity01","vol_to_mc"]
-        ], use_container_width=True, height=620)
+        st.markdown(f"**Ranking by:** `{lens_key()}`")
+        b = lens_sort(crypto_df)
+        st.dataframe(
+            b[["symbol","name","current_price","price_change_percentage_24h_in_currency",
+                "truth_full","raw_heat","divergence","fusion20","liquidity01","vol_to_mc"]],
+            use_container_width=True, height=640
+        )
+        st.markdown('<div class="spacer-xl"></div>', unsafe_allow_html=True)
         if PLOTLY_OK:
             fig = px.scatter(b, x="truth_full", y="raw_heat", text="symbol",
                              color="divergence", color_continuous_scale="Turbo")
             fig.update_traces(textposition="top center")
+            fig.update_layout(height=560)
             st.plotly_chart(fig, use_container_width=True)
 
 elif nav == "Stocks":
@@ -471,12 +489,13 @@ elif nav == "Stocks":
         st.error("No stocks data.")
     else:
         kpi_row(stocks_df)
-        st.markdown(f"**Ranking by:** `{lens_title()}`")
-        b = sort_with_lens(stocks_df)
-        st.dataframe(b[
-            ["symbol","current_price","price_change_percentage_24h_in_currency",
-             "truth_full","raw_heat","divergence","fusion20"]
-        ], use_container_width=True, height=620)
+        st.markdown(f"**Ranking by:** `{lens_key()}`")
+        b = lens_sort(stocks_df)
+        st.dataframe(
+            b[["symbol","current_price","price_change_percentage_24h_in_currency",
+               "truth_full","raw_heat","divergence","fusion20"]],
+            use_container_width=True, height=640
+        )
 
 elif nav == "FX":
     st.subheader("💱 Forex Market (Preview)")
@@ -485,12 +504,13 @@ elif nav == "FX":
         st.error("No FX data.")
     else:
         kpi_row(fx_df)
-        st.markdown(f"**Ranking by:** `{lens_title()}`")
-        b = sort_with_lens(fx_df)
-        st.dataframe(b[
-            ["symbol","current_price","price_change_percentage_24h_in_currency",
-             "truth_full","raw_heat","divergence","fusion20"]
-        ], use_container_width=True, height=620)
+        st.markdown(f"**Ranking by:** `{lens_key()}`")
+        b = lens_sort(fx_df)
+        st.dataframe(
+            b[["symbol","current_price","price_change_percentage_24h_in_currency",
+               "truth_full","raw_heat","divergence","fusion20"]],
+            use_container_width=True, height=640
+        )
 
 elif nav == "Scores":
     st.subheader("🏁 Scores — Truth / Raw / Divergence (Global Lens Active)")
@@ -504,28 +524,32 @@ elif nav == "Scores":
     if base is None or base.empty:
         st.warning("No data available for the selected source.")
     else:
-        st.markdown(f"**Ranking by:** `{lens_title()}`")
-        base = sort_with_lens(base)
+        st.markdown(f"**Ranking by:** `{lens_key()}`")
+        base = lens_sort(base)
 
         st.markdown("#### Truth (ranked)")
         cols_t = [c for c in ["asset_type","symbol","name","current_price",
                               "price_change_percentage_24h_in_currency","truth_full","liquidity01","vol_to_mc"] if c in base.columns]
-        st.dataframe(base.sort_values("truth_full", ascending=False)[cols_t], use_container_width=True, height=280)
+        st.dataframe(base.sort_values("truth_full", ascending=False)[cols_t], use_container_width=True, height=320)
 
+        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
         st.markdown("#### Raw (ranked)")
         cols_r = [c for c in ["asset_type","symbol","current_price",
                               "price_change_percentage_24h_in_currency","raw_heat","vol_to_mc","momo_24h01"] if c in base.columns]
-        st.dataframe(base.sort_values("raw_heat", ascending=False)[cols_r], use_container_width=True, height=280)
+        st.dataframe(base.sort_values("raw_heat", ascending=False)[cols_r], use_container_width=True, height=320)
 
+        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
         st.markdown("#### Divergence (ranked)")
         cols_d = [c for c in ["asset_type","symbol","current_price","divergence",
                               "truth_full","raw_heat","price_change_percentage_24h_in_currency"] if c in base.columns]
-        st.dataframe(base.sort_values("divergence", ascending=False)[cols_d], use_container_width=True, height=280)
+        st.dataframe(base.sort_values("divergence", ascending=False)[cols_d], use_container_width=True, height=320)
 
+        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
         if PLOTLY_OK:
             fig = px.scatter(base, x="truth_full", y="raw_heat", text="symbol",
                              color="divergence", color_continuous_scale="Turbo")
             fig.update_traces(textposition="top center")
+            fig.update_layout(height=560)
             st.plotly_chart(fig, use_container_width=True)
 
 elif nav == "Sentiment":
@@ -533,6 +557,7 @@ elif nav == "Sentiment":
     kind = "ok" if NEWS_SENTIMENT>=0.6 else "warn" if NEWS_SENTIMENT>=0.4 else "err"
     chip(kind, f"Aggregate Sentiment: {NEWS_SENTIMENT:.2f}")
     st.progress(min(max(NEWS_SENTIMENT, 0.0), 1.0))
+    st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
     if NEWS_TITLES:
         st.markdown("Recent Headlines (sample):")
         for t in NEWS_TITLES[:25]:
@@ -576,18 +601,18 @@ elif nav == "Signal Center":
         if only_watch and st.session_state.watchlist:
             mask = mask & (q["symbol"].isin([s.upper() for s in st.session_state.watchlist]))
 
-        hits = sort_with_lens(q[mask]).sort_values(["fusion20","abs_div","truth_full"], ascending=False)
+        hits = lens_sort(q[mask]).sort_values(["fusion20","abs_div","truth_full"], ascending=False)
         st.success(f"Matches: {len(hits)}")
         if len(hits):
             st.dataframe(
                 hits[["asset_type","symbol","current_price","fusion20","truth_full","raw_heat","divergence",
                       "price_change_percentage_24h_in_currency"]],
-                use_container_width=True, height=420,
+                use_container_width=True, height=460,
             )
         else:
             st.info("No matches. Adjust thresholds or watchlist.")
 
-        st.markdown("---")
+        st.markdown('<div class="spacer-l"></div>', unsafe_allow_html=True)
         st.subheader("Delivery")
         col1,col2 = st.columns(2)
         with col1:
@@ -607,7 +632,7 @@ elif nav == "Signal Center":
                 if last and (now - last) < timedelta(minutes=cooldown_min):
                     continue
                 msg = (
-                    f"CHL v13.7 Signal — {r['asset_type']} {r['symbol']}\n"
+                    f"CHL v14.0 Signal — {r['asset_type']} {r['symbol']}\n"
                     f"Price: {r['current_price']:.4g}\n"
                     f"Fusion20: {r['fusion20']:.3f} | Truth: {r['truth_full']:.3f} | Raw: {r['raw_heat']:.3f}\n"
                     f"Delta (Raw-Truth): {r['divergence']:+.3f} | 24h%: {r['price_change_percentage_24h_in_currency']:.2f}%\n"
@@ -615,7 +640,7 @@ elif nav == "Signal Center":
                 )
                 ok = True
                 if enable_discord and hook: ok = ok and send_discord(hook, msg)
-                if enable_email and email_to: ok = ok and send_email(email_to, subject=f"CHL v13.7 — {r['symbol']}", body=msg)
+                if enable_email and email_to: ok = ok and send_email(email_to, subject=f"CHL v14.0 — {r['symbol']}", body=msg)
                 if ok:
                     st.session_state.cooldown[key] = now
                     st.session_state.alerts_log.append(
@@ -632,7 +657,7 @@ elif nav == "Signal Center":
         st.markdown("Recent Alerts Log")
         if st.session_state.alerts_log:
             log_df = pd.DataFrame(st.session_state.alerts_log)
-            st.dataframe(log_df.sort_values("ts", ascending=False), use_container_width=True, height=240)
+            st.dataframe(log_df.sort_values("ts", ascending=False), use_container_width=True, height=260)
         else:
             st.caption("No alert logs yet.")
 
@@ -652,6 +677,7 @@ elif nav == "Export":
 
 
 # ========================= Watchlist Pills ==========================================
+st.markdown('<div class="spacer-xl"></div>', unsafe_allow_html=True)
 st.markdown("### Watchlist Signals")
 wl = [s.upper() for s in st.session_state.watchlist]
 cur = unify_frames([crypto_df, stocks_df, fx_df])
@@ -660,21 +686,22 @@ if wl and cur is not None and not cur.empty:
     if sub.empty:
         st.caption("Your watchlist symbols are not in the current tables.")
     else:
-        html=[]
+        pills=[]
         for _, r in sub.iterrows():
             sign = "ok" if r["divergence"] >= 0 else "err"
-            html.append(
+            pills.append(
                 f'<span class="chip {sign}"><b>{r["symbol"]}</b> · ${r["current_price"]:.4g} · '
                 f'F:{r["fusion20"]:.2f} · T:{r["truth_full"]:.2f} · R:{r["raw_heat"]:.2f} · Δ {r["divergence"]:+.2f}</span>'
             )
-        st.markdown(" ".join(html), unsafe_allow_html=True)
+        st.markdown(" ".join(pills), unsafe_allow_html=True)
 else:
     st.caption("Add symbols in the sidebar (BTC, ETH, AAPL, etc.)")
 
 
 # ========================= Footer ====================================================
+st.markdown('<div class="spacer-xxl"></div>', unsafe_allow_html=True)
 st.divider()
 st.markdown(
-    "<p style='text-align:center; font-size:14px;'>© 2025 Jesse Ray Landingham Jr | Phase 13.7 | Global Lens: Truth / Raw / Divergence</p>",
+    "<p style='text-align:center; font-size:16px;'>© 2025 Jesse Ray Landingham Jr | Phase 14.0 | Global Lens: Truth / Raw / Divergence</p>",
     unsafe_allow_html=True
-) 
+)
