@@ -1,5 +1,4 @@
- # ====================================================================================
-#  CRYPTO HYBRID LIVE — PHASE 14.0 (FULL)
+HYBRID LIVE — PHASE 14.0 (FULL)
 #  TRUTH/RAW/DIVERGENCE/FUSION global filter + robust spacing + larger UI
 #  Unified Crypto + Stocks + FX + Sentiment + Scores + Signal Center + Export
 #  SmartCache AutoClean™ built-in
