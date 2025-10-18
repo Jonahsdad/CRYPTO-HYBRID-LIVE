@@ -25,3 +25,11 @@ plotly-express
 # Optional AI/NLP integrations
 transformers
 torch
+streamlit
+pandas
+numpy
+requests
+yfinance
+plotly
+feedparser
+textblob
