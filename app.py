@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 # ============================== IMPORTS ==============================
 import math, time, io, re
 from datetime import datetime, timezone
