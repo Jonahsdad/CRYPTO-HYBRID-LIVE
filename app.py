@@ -1,5 +1,4 @@
-# -----------------------------------------------------------------------------
-# Crypto Hybrid Live — Phase 15.3 (FULL Interactive)
+Crypto Hybrid Live — Phase 15.3 (FULL Interactive)
 # POWERED BY JESSE RAY LANDINGHAM JR
 # -----------------------------------------------------------------------------
 # What you get:
