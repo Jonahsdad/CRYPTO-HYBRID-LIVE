@@ -1,4 +1,4 @@
-# app.py  — Crypto Hybrid Live (Phase 18.6)
+#app.py  — Crypto Hybrid Live (Phase 18.6)
 # Full, self-contained Streamlit app.
 # Includes: single-line hero, interactive metric buttons, Plotly fallback, Crypto + Stocks + Options.
 
