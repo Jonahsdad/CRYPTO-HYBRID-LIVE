@@ -3,6 +3,7 @@ streamlit>=1.36,<1.40
 pandas>=2.2
 numpy>=1.26
 requests>=2.31
+plotly>=5.22
 
 # Charts
 plotly>=5.22
@@ -23,4 +24,4 @@ matplotlib>=3.8
 
 # Text processing (kept light; we are not loading big models here)
 regex>=2024.5.15
-plotly>=5.22
+
