@@ -10,3 +10,4 @@ finnhub-python==2.4.21
 polygon-api-client==1.13.10
 alpha_vantage==3.0.0
 pandas-datareader==0.10.0
+yfinance
