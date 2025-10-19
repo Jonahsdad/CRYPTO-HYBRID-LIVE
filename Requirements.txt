@@ -1,35 +1,12 @@
-libraries
-streamlit
-yfinance
-pandas
-numpy
-requests
-plotly
+streamlit==1.50.0
+pandas==2.3.3
+numpy==2.3.3
+requests==2.32.3
+plotly==5.24.1
 
-# Data processing & optional enhancements
-textblob
-nltk
-regex
-tqdm
-scipy
-pyarrow
-beautifulsoup4
-lxml
-
-# Visualization
-matplotlib
-seaborn
-altair
-plotly-express
-
-# Optional AI/NLP integrations
-transformers
-torch
-streamlit
-pandas
-numpy
-requests
-yfinance
-plotly
-feedparser
-textblob
+# Live market data
+yfinance==0.2.43
+finnhub-python==2.4.21
+polygon-api-client==1.13.10
+alpha_vantage==3.0.0
+pandas-datareader==0.10.0
