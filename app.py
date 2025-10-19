@@ -1,13 +1,3 @@
- Live — Phase 18.0
-# POWERED BY JESSE RAY LANDINGHAM JR
-# -----------------------------------------------------------------------------
-# New in this phase:
-# - US Market (All Listings): pulls live symbol lists from NASDAQ Trader
-#   (NASDAQ, NYSE, ARCA, AMEX, etc.), filters Active issues, optional ETF toggle.
-# - Search + filter + bulk snapshot with yfinance, scored by RAW/TRUTH/CONFLUENCE.
-# - Keeps Crypto, Confluence, S&P 500, Options, Fusion, Export.
-# -----------------------------------------------------------------------------
-
 from __future__ import annotations
 import math, time
 from datetime import datetime, timezone
