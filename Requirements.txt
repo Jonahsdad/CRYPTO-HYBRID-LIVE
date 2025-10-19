@@ -1,27 +1,6 @@
-Core
-streamlit>=1.36,<1.40
-pandas>=2.2
-numpy>=1.26
-requests>=2.31
-plotly>=5.22
-
-# Charts
-plotly>=5.22
-
-# Crypto & web parsing helpers
-lxml>=5.2
-html5lib>=1.1
-beautifulsoup4>=4.12
-
-# Stocks (choose at least one: Alpha Vantage via API key, or yfinance)
-yfinance>=0.2.40
-
-# Optional / quality-of-life
-pyarrow>=16.1
-tqdm>=4.66
-altair>=5.3
-matplotlib>=3.8
-
-# Text processing (kept light; we are not loading big models here)
-regex>=2024.5.15
-
+streamlit==1.38.0
+pandas
+numpy
+requests
+yfinance
+lxml
