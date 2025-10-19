@@ -1,5 +1,7 @@
-annotations
-import math, time
+from __future__ import annotations
+
+# ============================== IMPORTS ==============================
+import math, time, io, re
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
@@ -14,6 +16,7 @@ try:
     HAS_YF = True
 except Exception:
     HAS_YF = False
+    yf = None  # avoid NameError
 
 PHASE_TAG  = "PHASE 18.0 — US LISTINGS + OPTIONS"
 POWERED_BY = "POWERED BY JESSE RAY LANDINGHAM JR"
@@ -86,7 +89,8 @@ def now_utc_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 def pct_sigmoid(pct) -> float:
-    if pct is None or (isinstance(pct, float) and np.isnan(pct)): return 0.5
+    if pct is None or (isinstance(pct, float) and np.isnan(pct)):
+        return 0.5
     try:
         x = float(pct) / 10.0
         return 1.0 / (1.0 + math.exp(-x))
@@ -96,19 +100,32 @@ def pct_sigmoid(pct) -> float:
 @st.cache_data(ttl=60, show_spinner="Loading CoinGecko…")
 def fetch_cg_markets(vs: str = "usd", per_page: int = 250) -> pd.DataFrame:
     url = "https://api.coingecko.com/api/v3/coins/markets"
-    p = {"vs_currency": vs, "order": "market_cap_desc", "per_page": int(max(1, min(per_page, 250))),
-         "page": 1, "sparkline": "false", "price_change_percentage": "1h,24h,7d", "locale": "en"}
-    r = requests.get(url, params=p, timeout=30); r.raise_for_status()
+    p = {
+        "vs_currency": vs,
+        "order": "market_cap_desc",
+        "per_page": int(max(1, min(per_page, 250))),
+        "page": 1,
+        "sparkline": "false",
+        "price_change_percentage": "1h,24h,7d",
+        "locale": "en",
+    }
+    r = requests.get(url, params=p, timeout=30)
+    r.raise_for_status()
     df = pd.DataFrame(r.json())
-    for k in ["name","symbol","current_price","market_cap","total_volume",
-              "price_change_percentage_1h_in_currency","price_change_percentage_24h_in_currency",
-              "price_change_percentage_7d_in_currency"]:
-        if k not in df.columns: df[k] = np.nan
+    for k in [
+        "name","symbol","current_price","market_cap","total_volume",
+        "price_change_percentage_1h_in_currency",
+        "price_change_percentage_24h_in_currency",
+        "price_change_percentage_7d_in_currency",
+    ]:
+        if k not in df.columns:
+            df[k] = np.nan
     return df
 
 # ============================== SCORING ======================================
 def build_scores(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty: return pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
     t = df.copy()
 
     # Inputs
@@ -125,15 +142,22 @@ def build_scores(df: pd.DataFrame) -> pd.DataFrame:
 
     # RAW & TRUTH
     t["raw_heat"] = (0.5 * (t["vol_to_mc"] / 2).clip(0, 1) + 0.5 * m1h.fillna(0.5)).clip(0, 1)
-    t["truth_full"] = (0.30*(t["vol_to_mc"]/2).clip(0,1) + 0.25*m24.fillna(0.5) +
-                       0.25*m7d.fillna(0.5) + 0.20*t["liq01"].fillna(0.0)).clip(0,1)
+    t["truth_full"] = (
+        0.30*(t["vol_to_mc"]/2).clip(0,1) +
+        0.25*m24.fillna(0.5) +
+        0.25*m7d.fillna(0.5) +
+        0.20*t["liq01"].fillna(0.0)
+    ).clip(0,1)
 
     # Confluence
     t["consistency01"] = 1 - (m24.fillna(0.5) - m7d.fillna(0.5)).abs()
     t["agreement01"]   = 1 - (t["raw_heat"] - t["truth_full"]).abs()
     t["energy01"]      = (t["vol_to_mc"] / 2).clip(0,1)
-    t["confluence01"]  = (0.35*t["truth_full"] + 0.35*t["raw_heat"] + 0.10*t["consistency01"] +
-                          0.10*t["agreement01"] + 0.05*t["energy01"] + 0.05*t["liq01"]).clip(0,1)
+    t["confluence01"]  = (
+        0.35*t["truth_full"] + 0.35*t["raw_heat"] +
+        0.10*t["consistency01"] + 0.10*t["agreement01"] +
+        0.05*t["energy01"] + 0.05*t["liq01"]
+    ).clip(0,1)
 
     t["divergence"] = (t["raw_heat"] - t["truth_full"]).abs()
 
@@ -148,7 +172,8 @@ def build_scores(df: pd.DataFrame) -> pd.DataFrame:
 # ============================== UI HELPERS ===================================
 def section_header(title: str, caption: str = "") -> None:
     st.markdown(f"<div class='section-title'>{title}</div>", unsafe_allow_html=True)
-    if caption: st.caption(caption)
+    if caption:
+        st.caption(caption)
 
 def kpi_row(df_scored: pd.DataFrame, label: str) -> None:
     n = len(df_scored)
@@ -167,7 +192,9 @@ def kpi_row(df_scored: pd.DataFrame, label: str) -> None:
 def table_view(df: pd.DataFrame, cols: List[str]) -> None:
     have = [c for c in cols if c in df.columns]
     st.dataframe(
-        df[have], use_container_width=True, hide_index=True,
+        df[have],
+        use_container_width=True,
+        hide_index=True,
         column_config={
             "current_price": st.column_config.NumberColumn("Price", format="$%.2f"),
             "market_cap": st.column_config.NumberColumn("Mkt Cap", format="$%d"),
@@ -190,9 +217,11 @@ def table_view(df: pd.DataFrame, cols: List[str]) -> None:
 # ============================== STOCKS UTILITIES ==============================
 @st.cache_data(ttl=180, show_spinner="Pulling daily price snapshots…")
 def yf_snapshot_daily(tickers: List[str]) -> pd.DataFrame:
-    if not HAS_YF or not tickers: return pd.DataFrame()
+    if not HAS_YF or not tickers:
+        return pd.DataFrame()
     tickers = [t.strip().upper() for t in tickers if t.strip()]
-    if not tickers: return pd.DataFrame()
+    if not tickers:
+        return pd.DataFrame()
     try:
         data = yf.download(
             tickers=" ".join(tickers), period="5d", interval="1d",
@@ -202,29 +231,52 @@ def yf_snapshot_daily(tickers: List[str]) -> pd.DataFrame:
         return pd.DataFrame()
 
     rows = []
-    for t in tickers:
+    # yfinance returns a MultiIndex when multiple tickers, else single-level
+    if isinstance(data.columns, pd.MultiIndex):
+        for t in tickers:
+            try:
+                s = data[t]
+                last = float(s["Close"].dropna().iloc[-1])
+                prev = float(s["Close"].dropna().iloc[-2]) if s["Close"].dropna().shape[0] >= 2 else np.nan
+                pct24 = (last/prev - 1.0)*100.0 if pd.notna(prev) else np.nan
+                rows.append({
+                    "name": t, "symbol": t, "current_price": last,
+                    "price_change_percentage_24h_in_currency": pct24,
+                    "market_cap": np.nan, "total_volume": np.nan,
+                    "price_change_percentage_1h_in_currency": np.nan,
+                    "price_change_percentage_7d_in_currency": np.nan
+                })
+            except Exception:
+                rows.append({
+                    "name": t, "symbol": t, "current_price": np.nan,
+                    "price_change_percentage_24h_in_currency": np.nan,
+                    "market_cap": np.nan, "total_volume": np.nan,
+                    "price_change_percentage_1h_in_currency": np.nan,
+                    "price_change_percentage_7d_in_currency": np.nan
+                })
+    else:
+        # Single ticker case
         try:
-            s = data[t]
-            last = float(s.iloc[-1]["Close"])
-            prev = float(s.iloc[-2]["Close"]) if len(s) >= 2 else np.nan
+            last = float(data["Close"].dropna().iloc[-1])
+            prev = float(data["Close"].dropna().iloc[-2]) if data["Close"].dropna().shape[0] >= 2 else np.nan
             pct24 = (last/prev - 1.0)*100.0 if pd.notna(prev) else np.nan
-            rows.append({"name": t, "symbol": t, "current_price": last,
-                         "price_change_percentage_24h_in_currency": pct24,
-                         "market_cap": np.nan, "total_volume": np.nan,
-                         "price_change_percentage_1h_in_currency": np.nan,
-                         "price_change_percentage_7d_in_currency": np.nan})
+            t = tickers[0]
+            rows.append({
+                "name": t, "symbol": t, "current_price": last,
+                "price_change_percentage_24h_in_currency": pct24,
+                "market_cap": np.nan, "total_volume": np.nan,
+                "price_change_percentage_1h_in_currency": np.nan,
+                "price_change_percentage_7d_in_currency": np.nan
+            })
         except Exception:
-            rows.append({"name": t, "symbol": t, "current_price": np.nan,
-                         "price_change_percentage_24h_in_currency": np.nan,
-                         "market_cap": np.nan, "total_volume": np.nan,
-                         "price_change_percentage_1h_in_currency": np.nan,
-                         "price_change_percentage_7d_in_currency": np.nan})
+            pass
     return pd.DataFrame(rows)
 
 # ============================== OPTIONS ======================================
 @st.cache_data(ttl=120)
 def list_expirations(ticker: str) -> List[str]:
-    if not HAS_YF or not ticker: return []
+    if not HAS_YF or not ticker:
+        return []
     try:
         return list(yf.Ticker(ticker).options)
     except Exception:
@@ -232,15 +284,18 @@ def list_expirations(ticker: str) -> List[str]:
 
 @st.cache_data(ttl=180, show_spinner="Loading option chain…")
 def load_options_chain(ticker: str, expiration: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    if not HAS_YF or not ticker or not expiration: return pd.DataFrame(), pd.DataFrame()
+    if not HAS_YF or not ticker or not expiration:
+        return pd.DataFrame(), pd.DataFrame()
     try:
         tk = yf.Ticker(ticker)
         chain = tk.option_chain(expiration)
         calls, puts = chain.calls.copy(), chain.puts.copy()
-        keep = ["contractSymbol","lastTradeDate","strike","lastPrice","bid","ask","change",
-                "percentChange","volume","openInterest","impliedVolatility"]
+        keep = [
+            "contractSymbol","lastTradeDate","strike","lastPrice","bid","ask","change",
+            "percentChange","volume","openInterest","impliedVolatility"
+        ]
         calls = calls[[c for c in keep if c in calls.columns]]
-        puts  = puts [[c for c in keep if c in puts.columns]]
+        puts  = puts[[c for c in keep if c in puts.columns]]   # <-- fixed dot here
         return calls, puts
     except Exception:
         return pd.DataFrame(), pd.DataFrame()
@@ -259,9 +314,6 @@ def fetch_sp500_constituents() -> pd.DataFrame:
         return pd.DataFrame(columns=["symbol","name","Sector"])
 
 # 2) US Listings (NASDAQ Trader)
-#    - nasdaqlisted.txt : NASDAQ issues
-#    - otherlisted.txt  : NYSE/NYSE American/ARCA/etc.
-# Format is pipe-delimited. We filter Active=Y and non-test issues.
 NASDAQ_LISTED_URL = "https://ftp.nasdaqtrader.com/dynamic/SYMBOL_DIRECTORY/nasdaqlisted.txt"
 OTHER_LISTED_URL  = "https://ftp.nasdaqtrader.com/dynamic/SYMBOL_DIRECTORY/otherlisted.txt"
 
@@ -270,9 +322,9 @@ def fetch_us_listings() -> pd.DataFrame:
     frames = []
     try:
         txt = requests.get(NASDAQ_LISTED_URL, timeout=30).text
-        df = pd.read_csv(pd.compat.StringIO(txt), sep="|")
+        df = pd.read_csv(io.StringIO(txt), sep="|")   # <-- use io.StringIO
         # Remove footer rows
-        df = df[~df["Symbol"].str.contains("File Creation Time", na=False)]
+        df = df[~df["Symbol"].astype(str).str.contains("File Creation Time", na=False)]
         df = df.rename(columns={
             "Symbol":"symbol",
             "Security Name":"name",
@@ -288,8 +340,8 @@ def fetch_us_listings() -> pd.DataFrame:
 
     try:
         txt = requests.get(OTHER_LISTED_URL, timeout=30).text
-        df = pd.read_csv(pd.compat.StringIO(txt), sep="|")
-        df = df[~df["ACT Symbol"].str.contains("File Creation Time", na=False)]
+        df = pd.read_csv(io.StringIO(txt), sep="|")   # <-- use io.StringIO
+        df = df[~df["ACT Symbol"].astype(str).str.contains("File Creation Time", na=False)]
         df = df.rename(columns={
             "ACT Symbol":"symbol",
             "Security Name":"name",
@@ -316,6 +368,11 @@ def fetch_us_listings() -> pd.DataFrame:
     return allu.drop_duplicates(subset=["symbol"])
 
 # ============================== PAGES =========================================
+def section_header(title: str, caption: str = "") -> None:
+    st.markdown(f"<div class='section-title'>{title}</div>", unsafe_allow_html=True)
+    if caption:
+        st.caption(caption)
+
 def page_dashboard() -> None:
     section_header("Dashboard", "Top Confluence & Truth leaders (Crypto).")
     dfc = build_scores(fetch_cg_markets("usd", 200))
@@ -338,7 +395,9 @@ def page_crypto() -> None:
     section_header("Crypto", "Interactive TRUTH / RAW / CONFLUENCE (CoinGecko).")
     topn_pull = st.slider("Pull Top N from API", 50, 250, 200, step=50, key="cg_pull")
     df = build_scores(fetch_cg_markets("usd", topn_pull))
-    if df.empty: st.warning("No data from CoinGecko."); return
+    if df.empty:
+        st.warning("No data from CoinGecko.")
+        return
     kpi_row(df, "Crypto")
     # Simple interactive filters
     c1,c2,c3,c4 = st.columns([1,1,1,1])
@@ -347,7 +406,8 @@ def page_crypto() -> None:
     with c3: search = st.text_input("Search", value="", key="cg_search").strip().lower()
     with c4: order = st.selectbox("Order by", ["confluence01","truth_full","raw_heat"], index=0, key="cg_order")
     out = df.copy()
-    if min_truth>0: out = out[out["truth_full"]>=min_truth]
+    if min_truth>0:
+        out = out[out["truth_full"]>=min_truth]
     if search:
         mask = out["name"].str.lower().str.contains(search, na=False) | out["symbol"].str.lower().str.contains(search, na=False)
         out = out[mask]
@@ -357,7 +417,9 @@ def page_crypto() -> None:
 def page_confluence() -> None:
     section_header("Confluence", "When RAW heat and TRUTH stability agree strongly (Crypto).")
     df = build_scores(fetch_cg_markets("usd", 200))
-    if df.empty: st.warning("No data from CoinGecko."); return
+    if df.empty:
+        st.warning("No data from CoinGecko.")
+        return
     kpi_row(df, "Confluence")
     table_view(df.sort_values("confluence01", ascending=False).head(50),
                ["name","symbol","current_price","CONFLUENCE_BADGE","confluence01","RAW_BADGE","TRUTH_BADGE","divergence"])
@@ -374,7 +436,9 @@ def page_sp500() -> None:
     limit = st.slider("Tickers to snapshot", 50, len(base), 200, step=50)
     tickers = base["symbol"].tolist()[:limit]
     snap = yf_snapshot_daily(tickers)
-    if snap.empty: st.warning("No prices returned. Try fewer tickers or retry."); return
+    if snap.empty:
+        st.warning("No prices returned. Try fewer tickers or retry.")
+        return
     merged = snap.merge(base, on="symbol", how="left")
     scored = build_scores(merged)
     kpi_row(scored, "S&P 500")
