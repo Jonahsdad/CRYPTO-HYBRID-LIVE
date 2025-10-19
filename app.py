@@ -1,4 +1,4 @@
-contained app.py
+#contained app.py
 # Fixes: banner, robust Truth/Raw/Confluence visuals, Stocks + Options via yfinance.
 
 import math, time, io, re
