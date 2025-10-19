@@ -1,4 +1,4 @@
-============================ CRYPTO HYBRID LIVE — v18.1 ==============================
+#============================ CRYPTO HYBRID LIVE — v18.1 ==============================
 # Full, self-contained app.py
 # Fixes: banner, robust Truth/Raw/Confluence visuals, Stocks + Options via yfinance.
 
