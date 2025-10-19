@@ -1,4 +1,4 @@
-#app.py — Phase 19.0 (Hero 3×, robust pills, multi-provider stocks, safe fallbacks)
+#Phase 19.0 (Hero 3×, robust pills, multi-provider stocks, safe fallbacks)
 
 import math, time, json
 from datetime import datetime, timezone
