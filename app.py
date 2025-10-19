@@ -27,6 +27,7 @@ except Exception:
     HAS_PX = False
 
 # ------------------------------ Constants / Theme ------------------------------
+
 PHASE_TAG  = "PHASE 18.6 — Robust Stocks + Confluence + Options"
 BRAND      = "CRYPTO HYBRID LIVE — POWERED BY JESSE RAY LANDINGHAM JR"
 
@@ -65,9 +66,7 @@ CSS = """
 .section-title{font-size:24px;font-weight:900;margin:6px 0 6px}
 .stTabs [data-baseweb="tab-list"]{gap:10px}
 .small-note{color:#8aa0b8;font-size:.85rem}
-.stDataFrame, .stDataEditor{border-radius:10px;overflow:hidden}
-</style>
-"""
+.stDataFrame, .stDataEditor{border-
 st.markdown(CSS, unsafe_allow_html=True)
 
 # ------------------------------ Sidebar --------------------------------------
