@@ -1,4 +1,4 @@
-# app.py — Crypto Hybrid Live (v19.5)
+#app.py — Crypto Hybrid Live (v19.5)
 # One-file build: HERO 3x, Truth Pills, Pill-driven chart, Multi-source Stocks, S&P500, US Market, Options
 # POWERED BY JESSE RAY LANDINGHAM JR
 
