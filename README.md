@@ -1,3 +1,4 @@
+![CI](https://github.com/YOURUSERNAME/CRYPTO-HYBRID-LIVE/actions/workflows/ci.yml/badge.svg)
 # 🟢 Crypto Hybrid Live — Core
 
 ### Overview
