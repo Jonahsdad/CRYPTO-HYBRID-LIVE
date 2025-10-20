@@ -337,7 +337,17 @@ def page_dashboard():
     hero()
     dfc=score(cg_markets(per_page=200), w_vol,w_m24,w_m7,w_liq)
     kpis(dfc,"Crypto")
-    legend_strip()
+    legend_strip()def chart_bar(df: pd.DataFrame, metric: str, topn: int = 20):
+    try:
+        import plotly.express as px
+    except ModuleNotFoundError:
+        st.warning("Plotly not installed — charts disabled. Add `plotly>=5.22` to requirements.txt.")
+        return
+    key = {"raw": "raw_heat", "truth": "truth_full", "conf": "confluence01", "delta": "delta01"}.get(metric, "confluence01")
+    d = df.sort_values(key, ascending=False).head(topn)
+    fig = px.bar(d, x="symbol", y=key, hover_name="name", height=360)
+    fig.update_layout(margin=dict(l=10, r=10, t=30, b=10))
+    st.plotly_chart(fig, use_container_width=True)
     metric=pill_metric_state()
     chart_bar(dfc, metric, topn=22)
     c1,c2=st.columns(2)
