@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install deps (app + dev)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          # tooling
+          pip install ruff==0.6.9 black==24.8.0 mypy==1.11.2 pytest==8.3.3 pytest-cov==5.0.0
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Format check (black)
+        run: black --check .
+
+      - name: Type check (mypy)
+        run: mypy --ignore-missing-imports --pretty app.py
+
+      - name: Run tests
+        run: |
+          pytest -q --maxfail=1 --disable-warnings --cov=. --cov-report=term-missing
+
+      - name: Upload test artifacts (optional)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-artifacts
+          path: |
+            .pytest_cache
+            .mypy_cache
