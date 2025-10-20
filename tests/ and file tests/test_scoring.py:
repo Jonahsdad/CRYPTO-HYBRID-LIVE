@@ -1,0 +1,59 @@
+# tests/test_scoring.py
+import math
+import numpy as np
+import pandas as pd
+
+# A tiny local copy of the scoring math we rely on
+def _sgm(x):
+    if x is None or (isinstance(x, float) and math.isnan(x)):
+        return 0.5
+    return 1.0 / (1.0 + math.exp(-(float(x) / 10.0)))
+
+def build_demo_scores(df: pd.DataFrame):
+    df = df.copy()
+    df["total_volume"] = df.get("total_volume", 0)
+    df["market_cap"] = df.get("market_cap", 1)
+    vol_mc = (df["total_volume"] / df["market_cap"]).replace([np.inf, -np.inf], np.nan).clip(0, 2).fillna(0)
+    m1 = df.get("price_change_percentage_1h_in_currency", 0).apply(_sgm)
+    m24 = df.get("price_change_percentage_24h_in_currency", 0).apply(_sgm)
+    m7 = df.get("price_change_percentage_7d_in_currency", 0).apply(_sgm)
+    mc = df.get("market_cap", 0).fillna(0)
+    liq01 = 0 if mc.max() == 0 else (mc - mc.min()) / (mc.max() - mc.min() + 1e-9)
+    raw = (0.5 * (vol_mc / 2).clip(0, 1) + 0.5 * m1.fillna(0.5)).clip(0, 1)
+    truth = (0.30*(vol_mc/2).clip(0,1) + 0.25*m24.fillna(0.5) + 0.25*m7.fillna(0.5) + 0.20*liq01.fillna(0.0)).clip(0,1)
+    delta = (raw - truth).abs()
+    conf = (0.35*truth + 0.35*raw + 0.10*(1 - (m24 - m7).abs()) + 0.10*(1 - (raw - truth).abs()) + 0.05*(vol_mc/2).clip(0,1) + 0.05*liq01).clip(0,1)
+    return raw, truth, delta, conf
+
+def test_sigmoid_bounds():
+    assert 0.0 <= _sgm(-1000) <= 1.0
+    assert 0.0 <= _sgm(0) <= 1.0
+    assert 0.0 <= _sgm(1000) <= 1.0
+    assert _sgm(None) == 0.5
+
+def test_scoring_shape_and_range():
+    df = pd.DataFrame({
+        "name": ["A","B"],
+        "symbol": ["A","B"],
+        "total_volume": [1000, 0],
+        "market_cap": [1000000, 500000],
+        "price_change_percentage_1h_in_currency": [2.0, -1.5],
+        "price_change_percentage_24h_in_currency": [5.0, -3.0],
+        "price_change_percentage_7d_in_currency": [10.0, -8.0],
+    })
+    raw, truth, delta, conf = build_demo_scores(df)
+    for s in (raw, truth, delta, conf):
+        assert len(s) == 2
+        assert (s >= 0).all() and (s <= 1).all()
+
+def test_confluence_reacts_to_agreement():
+    # Coin X: RAW ~= TRUTH should lead to higher confluence
+    df = pd.DataFrame({
+        "total_volume": [10000, 10000],
+        "market_cap": [1_000_000, 1_000_000],
+        "price_change_percentage_1h_in_currency": [2.0, 2.0],
+        "price_change_percentage_24h_in_currency": [3.0, -3.0],  # agreement vs disagreement with 7d
+        "price_change_percentage_7d_in_currency": [3.0, 3.0],
+    })
+    raw, truth, delta, conf = build_demo_scores(df)
+    assert conf.iloc[0] >= conf.iloc[1]
