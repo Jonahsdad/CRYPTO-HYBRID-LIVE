@@ -337,7 +337,8 @@ def page_dashboard():
     hero()
     dfc=score(cg_markets(per_page=200), w_vol,w_m24,w_m7,w_liq)
     kpis(dfc,"Crypto")
-    legend_strip()def chart_bar(df: pd.DataFrame, metric: str, topn: int = 20):
+    legend_strip()
+    def chart_bar(df: pd.DataFrame, metric: str, topn: int = 20):
     try:
         import plotly.express as px
     except ModuleNotFoundError:
