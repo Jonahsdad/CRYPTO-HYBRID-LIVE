@@ -55,6 +55,7 @@ def get_coin_data() -> pd.DataFrame:
         })
 
 # ===================== S&P 500 DATA ====================
+
 @st.cache_data(ttl=900, show_spinner="Loading S&P 500 constituents…")
 def sp500_constituents() -> pd.DataFrame:
     """Load S&P 500 symbols from Wikipedia."""
