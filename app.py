@@ -54,36 +54,75 @@ def get_coin_data() -> pd.DataFrame:
         })
 
 # ===================== S&P 500 DATA ====================
+# ========================= S&P 500 Live + Fallback ============================
+import os
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import streamlit as st
 
-@st.cache_data(ttl=900, show_spinner="Loading S&P 500 constituents…")
-def sp500_constituents() -> pd.DataFrame:
-    """Load S&P 500 symbols from Wikipedia."""
+@st.cache_data(ttl=3600)
+def load_sp500_universe():
+    """Try local CSV first, fallback to Wikipedia."""
+    # --- Local CSV first
+    local_path = "data/sp500_backup.csv"
+    if os.path.exists(local_path):
+        df = pd.read_csv(local_path)
+        if not df.empty:
+            return df
+    
+    # --- Wikipedia fallback
     try:
-        tables = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")
-        df = tables[0].rename(columns={"Symbol": "Symbol", "Security": "Name", "GICS Sector": "Sector"})
-        df["Symbol"] = df["Symbol"].astype(str).str.upper().str.replace(".", "-", regex=False)
-        return df[["Symbol", "Name", "Sector"]]
+        df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
+        df = df.rename(columns={"Symbol": "symbol", "Security": "name", "GICS Sector": "sector"})
+        df["symbol"] = df["symbol"].astype(str).str.upper().str.replace(".", "-", regex=False)
+        df.to_csv(local_path, index=False)  # save for next run
+        return df[["symbol", "name", "sector"]]
     except Exception:
-        return pd.DataFrame(columns=["Symbol", "Name", "Sector"])
+        return pd.DataFrame(columns=["symbol", "name", "sector"])
 
 @st.cache_data(ttl=300, show_spinner="Fetching S&P 500 prices…")
-def sp500_snapshot(tickers: list[str]) -> pd.DataFrame:
-    """Get last close and 1-day % change for a set of tickers using yfinance."""
-    if not HAS_YF or not tickers:
-        return pd.DataFrame()
-    # yfinance can take a space-joined string of tickers
-    data = yf.download(" ".join(tickers), period="5d", interval="1d", group_by="ticker", auto_adjust=True, progress=False)
-    rows = []
-    for t in tickers:
+def get_stock_prices(symbols):
+    """Fetch live data via yfinance."""
+    data = []
+    for sym in symbols[:20]:  # limit for quick loads
         try:
-            s = data[t]
-            last = float(s.iloc[-1]["Close"])
-            prev = float(s.iloc[-2]["Close"]) if len(s) >= 2 else np.nan
-            pct = (last / prev - 1.0) * 100.0 if pd.notna(prev) else np.nan
-            rows.append({"Symbol": t, "Price (USD)": last, "1d Change (%)": pct})
+            ticker = yf.Ticker(sym)
+            info = ticker.info
+            price = info.get("currentPrice")
+            change = info.get("regularMarketChangePercent")
+            data.append({"Symbol": sym, "Price": price, "Change (%)": change})
         except Exception:
-            rows.append({"Symbol": t, "Price (USD)": np.nan, "1d Change (%)": np.nan})
-    return pd.DataFrame(rows)
+            continue
+    return pd.DataFrame(data)
+
+def page_sp500():
+    st.header("🏛️ S&P 500 — Live Snapshot")
+
+    df = load_sp500_universe()
+    if df.empty:
+        st.error("No S&P 500 data found. Ensure data/sp500_backup.csv exists.")
+        return
+
+    symbols = df["symbol"].tolist()
+    st.caption(f"Loaded {len(symbols)} tickers (showing top 20)")
+
+    live_df = get_stock_prices(symbols)
+    if live_df.empty:
+        st.warning("⚠️ Couldn’t fetch live prices (yfinance rate-limited). Try again later.")
+        st.dataframe(df.head(20), use_container_width=True)
+        return
+
+    merged = df.merge(live_df, left_on="symbol", right_on="Symbol", how="left")
+    st.dataframe(merged[["symbol", "name", "sector", "Price", "Change (%)"]].head(20),
+                 use_container_width=True, hide_index=True)
+
+    if not live_df.empty:
+        import plotly.express as px
+        fig = px.bar(live_df.sort_values("Change (%)", ascending=False),
+                     x="Symbol", y="Change (%)", title="Top Movers (Last 24h)")
+        st.plotly_chart(fig, use_container_width=True)
+
 
 # ===================== VIEWS ==========================
 def view_dashboard():
