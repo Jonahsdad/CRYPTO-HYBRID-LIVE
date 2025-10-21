@@ -1,5 +1,4 @@
-# =====================================================
-# 🚀 CRYPTO HYBRID LIVE — Full Fixed Header
+CRYPTO HYBRID LIVE — Full Fixed Header
 # =====================================================
 
 # ✅ All required imports
