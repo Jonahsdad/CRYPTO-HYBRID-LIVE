@@ -1,4 +1,3 @@
-# HYBRID LIVE — STABLE DEPLOY + S&P 500
 # Author: Jesse Ray Landingham Jr
 # =====================================================
 
