@@ -53,24 +53,84 @@ def get_coin_data() -> pd.DataFrame:
             "24h Change (%)": [2.3, -1.2, 0.5, -0.8, 3.1],
         })
 
-# ===================== S&P 500 DATA ====================
-# ========================= S&P 500 Live + Fallback ============================
+# ========================= S&P 500 LIVE SECTION ============================
 import os
 import pandas as pd
-import numpy as np
 import yfinance as yf
 import streamlit as st
+import plotly.express as px
 
+# --- Load universe (offline CSV + optional Wikipedia) ---
 @st.cache_data(ttl=3600)
 def load_sp500_universe():
-    """Try local CSV first, fallback to Wikipedia."""
-    # --- Local CSV first
     local_path = "data/sp500_backup.csv"
     if os.path.exists(local_path):
         df = pd.read_csv(local_path)
         if not df.empty:
             return df
-    
+    try:
+        df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
+        df = df.rename(columns={
+            "Symbol": "symbol",
+            "Security": "name",
+            "GICS Sector": "sector"
+        })
+        df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)
+        df.to_csv(local_path, index=False)
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["symbol", "name", "sector"])
+
+# --- Fetch live stock data ---
+@st.cache_data(ttl=300)
+def get_live_prices(symbols):
+    data = []
+    for sym in symbols[:20]:  # limit to top 20 for speed
+        try:
+            ticker = yf.Ticker(sym)
+            info = ticker.info
+            price = info.get("currentPrice")
+            change = info.get("regularMarketChangePercent")
+            data.append({
+                "symbol": sym,
+                "Price (USD)": price,
+                "24h Change (%)": change
+            })
+        except Exception:
+            continue
+    return pd.DataFrame(data)
+
+# --- Main page ---
+def page_sp500():
+    st.header("🏛️ S&P 500 — Live Snapshot")
+
+    df = load_sp500_universe()
+    if df.empty:
+        st.error("Could not load S&P 500 list. Please ensure data/sp500_backup.csv exists.")
+        return
+
+    st.caption(f"Loaded {len(df)} tickers. Displaying first 20 with live prices.")
+    live_df = get_live_prices(df["symbol"].tolist())
+
+    if live_df.empty:
+        st.warning("⚠️ Couldn’t fetch live prices (API timeout or rate limit). Showing static list.")
+        st.dataframe(df.head(20), use_container_width=True)
+        return
+
+    merged = df.merge(live_df, on="symbol", how="left")
+    merged = merged.head(20)
+
+    st.dataframe(
+        merged[["symbol", "name", "sector", "Price (USD)", "24h Change (%)"]],
+        use_container_width=True, hide_index=True
+    )
+
+    fig = px.bar(
+        merged.dropna(subset=["24h Change (%)"]),
+        x="symbol", y="24h Change (%)", color="24h Change (%)",
+        title="Top 20 Movers — 24h Change (%)"
+    )
+    st.plotly_chart(fig, use_container_width=True)
     # --- Wikipedia fallback
     try:
         df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
