@@ -1,3 +1,24 @@
+# =====================================================
+# 🚀 CRYPTO HYBRID LIVE — Full Fixed Header
+# =====================================================
+
+# ✅ All required imports
+import os
+import time
+import json
+import requests
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import streamlit as st       # <-- DO NOT add a # in front of this
+import yfinance as yf
+
+# ✅ Page config must come AFTER streamlit is imported
+st.set_page_config(page_title="Crypto Hybrid Live", page_icon="🚀", layout="wide")
+
+st.title("🚀 CRYPTO HYBRID LIVE")
+st.caption("Powered by Jesse Ray Landingham Jr")
+st.markdown("---")
 # mport pandas as pd
 import numpy as np
 import plotly.express as px
