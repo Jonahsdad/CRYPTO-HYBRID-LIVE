@@ -1,4 +1,4 @@
-# HYBRID LIVE — Full Fixed Header
+# LIVE — Full Fixed Header
 # =====================================================
 
 # ✅ All required imports
