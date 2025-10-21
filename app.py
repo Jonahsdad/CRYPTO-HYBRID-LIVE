@@ -1,4 +1,4 @@
-CRYPTO HYBRID LIVE — Full Fixed Header
+HYBRID LIVE — Full Fixed Header
 # =====================================================
 
 # ✅ All required imports
@@ -292,4 +292,3 @@ def main():
         view_about()
 
 if __name__ == "__main__":
-    main()
