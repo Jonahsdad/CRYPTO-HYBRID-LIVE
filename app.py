@@ -250,10 +250,8 @@ def view_sp500():
             st.warning(f"⚠️ Fallback prices used (Error: {e})")
             base["Latest Price"] = np.random.uniform(100, 300, len(base))
     else:
-        st.warning("No valid symbols found in the data source.")
-)
-
-    # Chart top movers
+        st.warning("No valid symbols found in the data source."))
+ # Chart top movers
     movers = merged.dropna(subset=["1d Change (%)"]).head(25)
     if not movers.empty:
         fig = px.bar(
