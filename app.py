@@ -1,4 +1,3 @@
-# Author: Jesse Ray Landingham Jr
 # =====================================================
 
 import streamlit as st
