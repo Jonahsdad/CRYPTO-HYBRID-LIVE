@@ -1,292 +1,194 @@
-# LIVE — Full Fixed Header
+# =====================================================
+# CRYPTO HYBRID LIVE — single-file Streamlit app
+# Author: Jesse Ray Landingham Jr
 # =====================================================
 
-# ✅ All required imports
-import os
-import time
-import json
-import requests
+from __future__ import annotations
+import numpy as np
 import pandas as pd
-import numpy as np
-import plotly.express as px
-import streamlit as st       # <-- DO NOT add a # in front of this
-import yfinance as yf
-
-# ✅ Page config must come AFTER streamlit is imported
-st.set_page_config(page_title="Crypto Hybrid Live", page_icon="🚀", layout="wide")
-
-st.title("🚀 CRYPTO HYBRID LIVE")
-st.caption("Powered by Jesse Ray Landingham Jr")
-st.markdown("---")
-# mport pandas as pd
-import numpy as np
-import plotly.express as px
 import requests
+import streamlit as st
 
-# Optional stock support (S&P 500) via yfinance
+# Optional deps
+try:
+    import plotly.express as px
+    HAS_PX = True
+except Exception:
+    HAS_PX = False
+
 try:
     import yfinance as yf
     HAS_YF = True
 except Exception:
     HAS_YF = False
 
-# ===================== PAGE CONFIG ====================
-st.set_page_config(page_title="Crypto Hybrid Live", layout="wide", page_icon="🚀")
+# ----------------------- Page config -----------------------
+st.set_page_config(
+    page_title="Crypto Hybrid Live",
+    layout="wide",
+    page_icon="🚀",
+    initial_sidebar_state="expanded",
+)
 
-APP_NAME = "CRYPTO HYBRID LIVE"
-st.title(f"🚀 {APP_NAME}")
-st.caption("Powered by Jesse Ray Landingham Jr")
-st.markdown("---")
+# ----------------------- CSS -----------------------
+st.markdown("""
+<style>
+.hero {
+  margin:8px 0 18px 0;
+  padding:14px 18px;
+  border-radius:14px;
+  border:1px solid #0d253a;
+  background:radial-gradient(120% 160% at 0% 0%, #0f172a 0%, #052c3b 40%, #0b1f33 100%);
+  color:#e6f1ff;
+  box-shadow:0 8px 28px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.hero h1{font-size:34px;margin:4px 0 2px 0;}
+.hero .sub{opacity:.85;font-size:13px;}
+.badge-row{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;}
+.badge{display:inline-flex;align-items:center;gap:8px;
+  padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.08);
+  background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));
+  color:#e6f1ff;font-weight:700;font-size:13px;}
+.kpi{background:#0e1726;border:1px solid #14243a;border-radius:12px;padding:12px 14px;}
+.kpi .label{opacity:.8;font-size:12px}
+.kpi .value{font-weight:800;font-size:18px}
+</style>
+""", unsafe_allow_html=True)
 
-# ===================== CRYPTO DATA ====================
-def get_coin_data() -> pd.DataFrame:
-    """Fetch crypto data from CoinGecko API with safe fallback."""
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/markets"
-        params = {
-            "vs_currency": "usd",
-            "order": "market_cap_desc",
-            "per_page": 10,
-            "page": 1,
-            "sparkline": "false",
-            "price_change_percentage": "24h"
-        }
-        r = requests.get(url, params=params, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        df = pd.DataFrame(data)[[
-            "id", "symbol", "current_price", "market_cap", "price_change_percentage_24h"
-        ]]
-        df.columns = ["Name", "Symbol", "Price (USD)", "Market Cap", "24h Change (%)"]
-        return df
-    except Exception as e:
-        st.warning(f"⚠️ CoinGecko error: {e}. Using fallback data.")
-        return pd.DataFrame({
-            "Name": ["Bitcoin", "Ethereum", "Solana", "XRP", "Cardano"],
-            "Symbol": ["BTC", "ETH", "SOL", "XRP", "ADA"],
-            "Price (USD)": [67000, 3200, 180, 0.52, 0.25],
-            "Market Cap": [1.2e12, 390e9, 75e9, 28e9, 10e9],
-            "24h Change (%)": [2.3, -1.2, 0.5, -0.8, 3.1],
-        })
+# ----------------------- Hero -----------------------
+st.markdown("""
+<div class="hero">
+  <h1>🚀 CRYPTO HYBRID LIVE</h1>
+  <div class="sub">Powered by <b>Jesse Ray Landingham Jr</b></div>
+  <div class="badge-row">
+    <div class="badge">🔥 RAW</div>
+    <div class="badge">💧 TRUTH</div>
+    <div class="badge">⭐ CONFLUENCE</div>
+    <div class="badge">⚡ Δ (RAW↔TRUTH)</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-# ========================= S&P 500 LIVE SECTION ============================
-import os
-import pandas as pd
-import yfinance as yf
-import streamlit as st
-import plotly.express as px
-
-# --- Load universe (offline CSV + optional Wikipedia) ---
-@st.cache_data(ttl=3600)
-def load_sp500_universe():
-    local_path = "data/sp500_backup.csv"
-    if os.path.exists(local_path):
-        df = pd.read_csv(local_path)
-        if not df.empty:
-            return df
-    try:
-        df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
-        df = df.rename(columns={
-            "Symbol": "symbol",
-            "Security": "name",
-            "GICS Sector": "sector"
-        })
-        df["symbol"] = df["symbol"].str.replace(".", "-", regex=False)
-        df.to_csv(local_path, index=False)
-        return df
-    except Exception:
-        return pd.DataFrame(columns=["symbol", "name", "sector"])
-
-# --- Fetch live stock data ---
+# =====================================================
+# Helpers
+# =====================================================
 @st.cache_data(ttl=300)
-def get_live_prices(symbols):
-    data = []
-    for sym in symbols[:20]:  # limit to top 20 for speed
-        try:
-            ticker = yf.Ticker(sym)
-            info = ticker.info
-            price = info.get("currentPrice")
-            change = info.get("regularMarketChangePercent")
-            data.append({
-                "symbol": sym,
-                "Price (USD)": price,
-                "24h Change (%)": change
-            })
-        except Exception:
-            continue
-    return pd.DataFrame(data)
-
-# --- Main page ---
-def page_sp500():
-    st.header("🏛️ S&P 500 — Live Snapshot")
-
-    df = load_sp500_universe()
-    if df.empty:
-        st.error("Could not load S&P 500 list. Please ensure data/sp500_backup.csv exists.")
-        return
-
-    st.caption(f"Loaded {len(df)} tickers. Displaying first 20 with live prices.")
-    live_df = get_live_prices(df["symbol"].tolist())
-
-    if live_df.empty:
-        st.warning("⚠️ Couldn’t fetch live prices (API timeout or rate limit). Showing static list.")
-        st.dataframe(df.head(20), use_container_width=True)
-        return
-
-    merged = df.merge(live_df, on="symbol", how="left")
-    merged = merged.head(20)
-
-    st.dataframe(
-        merged[["symbol", "name", "sector", "Price (USD)", "24h Change (%)"]],
-        use_container_width=True, hide_index=True
-    )
-
-    fig = px.bar(
-        merged.dropna(subset=["24h Change (%)"]),
-        x="symbol", y="24h Change (%)", color="24h Change (%)",
-        title="Top 20 Movers — 24h Change (%)"
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    # --- Wikipedia fallback
+def cg_top_market(per_page:int=20)->pd.DataFrame:
+    url="https://api.coingecko.com/api/v3/coins/markets"
+    params=dict(vs_currency="usd",order="market_cap_desc",per_page=per_page,page=1,
+                sparkline=False,price_change_percentage="24h")
     try:
-        df = pd.read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies")[0]
-        df = df.rename(columns={"Symbol": "symbol", "Security": "name", "GICS Sector": "sector"})
-        df["symbol"] = df["symbol"].astype(str).str.upper().str.replace(".", "-", regex=False)
-        df.to_csv(local_path, index=False)  # save for next run
-        return df[["symbol", "name", "sector"]]
-    except Exception:
-        return pd.DataFrame(columns=["symbol", "name", "sector"])
-
-@st.cache_data(ttl=300, show_spinner="Fetching S&P 500 prices…")
-def get_stock_prices(symbols):
-    """Fetch live data via yfinance."""
-    data = []
-    for sym in symbols[:20]:  # limit for quick loads
-        try:
-            ticker = yf.Ticker(sym)
-            info = ticker.info
-            price = info.get("currentPrice")
-            change = info.get("regularMarketChangePercent")
-            data.append({"Symbol": sym, "Price": price, "Change (%)": change})
-        except Exception:
-            continue
-    return pd.DataFrame(data)
-
-def page_sp500():
-    st.header("🏛️ S&P 500 — Live Snapshot")
-
-    df = load_sp500_universe()
-    if df.empty:
-        st.error("No S&P 500 data found. Ensure data/sp500_backup.csv exists.")
-        return
-
-    symbols = df["symbol"].tolist()
-    st.caption(f"Loaded {len(symbols)} tickers (showing top 20)")
-
-    live_df = get_stock_prices(symbols)
-    if live_df.empty:
-        st.warning("⚠️ Couldn’t fetch live prices (yfinance rate-limited). Try again later.")
-        st.dataframe(df.head(20), use_container_width=True)
-        return
-
-    merged = df.merge(live_df, left_on="symbol", right_on="Symbol", how="left")
-    st.dataframe(merged[["symbol", "name", "sector", "Price", "Change (%)"]].head(20),
-                 use_container_width=True, hide_index=True)
-
-    if not live_df.empty:
-        import plotly.express as px
-        fig = px.bar(live_df.sort_values("Change (%)", ascending=False),
-                     x="Symbol", y="Change (%)", title="Top Movers (Last 24h)")
-        st.plotly_chart(fig, use_container_width=True)
-
-
-# ===================== VIEWS ==========================
-def view_dashboard():
-    st.header("📊 Market Overview (Crypto)")
-    df = get_coin_data()
-    st.dataframe(df, use_container_width=True)
-    fig = px.bar(
-        df, x="Symbol", y="24h Change (%)", color="24h Change (%)",
-        title="Top 10 Cryptos — 24h Change (%)", color_continuous_scale=px.colors.sequential.Viridis
-    )
-    fig.update_layout(height=400, margin=dict(l=20, r=20, t=60, b=20))
-    st.plotly_chart(fig, use_container_width=True)
-
-def load_sp500_universe():
-    """Load S&P 500 companies from multiple fallback sources."""
-    try:
-        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        tables = pd.read_html(url)
-        df = tables[0]
-        return df[["Symbol", "Security", "GICS Sector", "GICS Sub-Industry"]]
+        r=requests.get(url,params=params,timeout=12)
+        r.raise_for_status()
+        d=pd.DataFrame(r.json())
+        cols=["name","symbol","current_price","market_cap","price_change_percentage_24h"]
+        d=d[cols].rename(columns={
+            "name":"Name","symbol":"Symbol","current_price":"Price (USD)",
+            "market_cap":"Market Cap","price_change_percentage_24h":"24h %"})
+        return d
     except Exception as e:
-        st.warning(f"⚠️ Couldn't load S&P 500 list (Wikipedia unreachable). Using fallback.")
-        fallback = pd.DataFrame({
-            "Symbol": ["AAPL", "MSFT", "GOOGL", "AMZN", "META"],
-            "Security": ["Apple", "Microsoft", "Alphabet", "Amazon", "Meta"],
-            "GICS Sector": ["Technology"] * 5,
-            "GICS Sub-Industry": ["Consumer Electronics", "Software", "Internet Services", "E-Commerce", "Social Media"],
+        st.warning(f"⚠️ CoinGecko error: {e}. Using fallback.")
+        return pd.DataFrame({
+            "Name":["Bitcoin","Ethereum","Solana","XRP","Cardano"],
+            "Symbol":["BTC","ETH","SOL","XRP","ADA"],
+            "Price (USD)":[67000,3500,180,0.52,0.25],
+            "Market Cap":[1.2e12,7.5e11,8.0e10,2.8e10,1.0e10],
+            "24h %":[2.4,-1.2,0.6,-0.8,3.1],
         })
-        return fallback
 
+@st.cache_data(ttl=3600)
+def load_sp500_universe()->pd.DataFrame:
+    try:
+        url="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        df=pd.read_html(url)[0]
+        df=df.rename(columns={"Symbol":"Symbol","Security":"Security",
+                              "GICS Sector":"GICS Sector",
+                              "GICS Sub-Industry":"GICS Sub-Industry"})
+        return df[["Symbol","Security","GICS Sector","GICS Sub-Industry"]]
+    except Exception:
+        st.warning("⚠️ Wikipedia unreachable – using fallback.")
+        return pd.DataFrame({
+            "Symbol":["AAPL","MSFT","GOOGL","AMZN","META"],
+            "Security":["Apple","Microsoft","Alphabet","Amazon","Meta Platforms"],
+            "GICS Sector":["Information Technology"]*5,
+            "GICS Sub-Industry":["Consumer Electronics","Systems Software",
+                                 "Interactive Media","E-Commerce","Social Media"]
+        })
+
+def attach_latest_prices(df:pd.DataFrame,n:int=10)->pd.DataFrame:
+    out=df.copy()
+    if out.empty: return out
+    syms=out["Symbol"].astype(str).str.replace(".","-",regex=False).head(n)
+    if HAS_YF:
+        try:
+            prices=[]
+            for s in syms:
+                try:
+                    h=yf.Ticker(s).history(period="1d")
+                    prices.append(float(h["Close"].iloc[-1]))
+                except Exception:
+                    prices.append(np.nan)
+            out.loc[out.index[:len(prices)],"Latest Price"]=prices
+            if out["Latest Price"].isna().all():
+                raise RuntimeError("No yfinance prices.")
+            return out
+        except Exception as e:
+            st.warning(f"⚠️ yfinance error: {e}. Using synthetic fallback.")
+    out["Latest Price"]=np.random.default_rng(42).uniform(80,350,len(out)).round(2)
+    return out
+
+# =====================================================
+# Views
+# =====================================================
+def view_crypto_dashboard():
+    st.subheader("📊 Market Overview (Crypto)")
+    df=cg_top_market(20)
+    c1,c2,c3,c4=st.columns(4)
+    c1.markdown(f'<div class="kpi"><div class="label">Assets</div>'
+                f'<div class="value">{len(df)}</div></div>',unsafe_allow_html=True)
+    c2.markdown(f'<div class="kpi"><div class="label">Avg 24h %</div>'
+                f'<div class="value">{df["24h %"].mean():.2f}%</div></div>',unsafe_allow_html=True)
+    c3.markdown(f'<div class="kpi"><div class="label">Top Price</div>'
+                f'<div class="value">${df["Price (USD)"].max():,.0f}</div></div>',unsafe_allow_html=True)
+    c4.markdown(f'<div class="kpi"><div class="label">Median Cap</div>'
+                f'<div class="value">${df["Market Cap"].median():,.0f}</div></div>',unsafe_allow_html=True)
+    st.dataframe(df,use_container_width=True,height=380)
+    if HAS_PX:
+        fig=px.bar(df.head(10),x="Symbol",y="24h %",title="Top 10 — 24h Change (%)",color="24h %")
+        st.plotly_chart(fig,use_container_width=True)
 
 def view_sp500():
-    """Render the S&P 500 tab."""
-    st.header("🏛️ S&P 500 — Live Snapshot")
-    base = load_sp500_universe()
-
-    st.dataframe(base.head(10), use_container_width=True)
-
-    if "Symbol" in base.columns:
-        try:
-            prices = []
-            for symbol in base["Symbol"].head(5):
-                ticker = yf.Ticker(symbol)
-                price = ticker.history(period="1d")["Close"].iloc[-1]
-                prices.append(price)
-            base["Latest Price"] = prices
-            st.success("✅ Live data loaded via yfinance")
-        except Exception as e:
-            st.warning(f"⚠️ Fallback prices used (Error: {e})")
-            base["Latest Price"] = np.random.uniform(100, 300, len(base))
-    else:
-        st.warning("No valid symbols found in the data source."))
- # Chart top movers
-    movers = merged.dropna(subset=["1d Change (%)"]).head(25)
-    if not movers.empty:
-        fig = px.bar(
-            movers, x="Symbol", y="1d Change (%)", color="1d Change (%)",
-            title="Top Movers (S&P 500 — 1d %)", color_continuous_scale=px.colors.sequential.Bluered
-        )
-        fig.update_layout(height=380, margin=dict(l=20, r=20, t=60, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+    st.subheader("🏛️ S&P 500 — Live Snapshot")
+    base=load_sp500_universe()
+    st.dataframe(base.head(20),use_container_width=True,height=360)
+    priced=attach_latest_prices(base,10)
+    if "Latest Price" in priced.columns:
+        st.success("✅ Prices attached (yfinance or fallback).")
+        st.dataframe(priced.head(10),use_container_width=True)
+        if HAS_PX:
+            fig=px.bar(priced.head(10),x="Symbol",y="Latest Price",title="Latest Prices (sample)")
+            st.plotly_chart(fig,use_container_width=True)
 
 def view_forecast():
-    st.header("🧠 Forecast Module")
-    st.info("Coming soon: LIPE predictive engine for crypto & equities.")
+    st.subheader("🧠 Forecast (coming soon)")
+    st.write("Predictive modules (LIPE) attach here.")
 
 def view_about():
-    st.header("ℹ️ About")
-    st.write("""
-**Crypto Hybrid Live** by **Jesse Ray Landingham Jr**  
-This build includes:
-- Crypto market view (CoinGecko)
-- S&P 500 live snapshot (yfinance)
-- Safe fallbacks so the app never crashes
-""")
+    st.subheader("ℹ️ About")
+    st.write("Crypto Hybrid Live blends RAW + TRUTH + CONFLUENCE for a clean market snapshot.")
 
-# ===================== ROUTER =========================
-def main():
-    menu = ["Dashboard (Crypto)", "S&P 500", "Forecast", "About"]
-    choice = st.sidebar.radio("Navigate", menu, index=0)
+# =====================================================
+# Router
+# =====================================================
+with st.sidebar:
+    st.header("Navigate")
+    page=st.radio("",["Dashboard (Crypto)","S&P 500","Forecast","About"],index=0)
 
-    if choice == "Dashboard (Crypto)":
-        view_dashboard()
-    elif choice == "S&P 500":
-        view_sp500()
-    elif choice == "Forecast":
-        view_forecast()
-    else:
-        view_about()
-
-if __name__ == "__main__":
+if page=="Dashboard (Crypto)":
+    view_crypto_dashboard()
+elif page=="S&P 500":
+    view_sp500()
+elif page=="Forecast":
+    view_forecast()
+else:
+    view_about()
