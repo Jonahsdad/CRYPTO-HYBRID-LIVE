@@ -1,0 +1,17 @@
+pdm_plus:
+  min_half_life_days: 30
+  regime_awareness: true
+  windows:
+    perf_short_days: 20
+    perf_mid_days: 60
+    perf_long_days: 120
+  decay:
+    method: exponential
+    retire_threshold: 0.70
+    shrink_range: [0.30, 0.70]
+  guardrails:
+    min_trades: 50
+    max_drawdown_pct: 15
+  outputs:
+    flags: [KEEP, SHRINK, RETIRE]
+    metrics: [decay_score, half_life_days, realized_vs_expected]
