@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "fir": {
+      "type": "object",
+      "properties": {
+        "min_truth_score": {"type": "number", "minimum": 0, "maximum": 1},
+        "quarantine_window_minutes": {"type": "integer", "minimum": 1},
+        "truth_score_weights": {"type": "object"},
+        "actions": {"type": "object"}
+      },
+      "required": ["min_truth_score", "quarantine_window_minutes", "truth_score_weights", "actions"]
+    }
+  },
+  "required": ["fir"]
+}
