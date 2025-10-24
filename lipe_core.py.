@@ -1,0 +1,49 @@
+# services/lipe_core.py
+import time
+from services.config_loader import load_all
+from services.ig_apply import apply_ig_command
+
+class LIPE:
+    """Main brain that connects all modules."""
+
+    def __init__(self):
+        # load your YAML settings
+        self.refresh_configs()
+        # storage for live readings
+        self.metrics = {
+            "NoiseIndex": None,
+            "SyncState": None,
+            "DecayScore": None,
+            "TruthScore": None,
+        }
+        self.history = []
+
+    def refresh_configs(self):
+        self.cfg = load_all()  # reads your YAML files
+
+    def update_metric(self, key, value):
+        """Save the latest value (for example NoiseIndex = 0.6)"""
+        self.metrics[key] = value
+
+    def next_best_course(self):
+        """The NBC autopilot logic."""
+        n = self.metrics["NoiseIndex"] or 0.5
+        s = self.metrics["SyncState"] or "ALIGNED"
+        d = self.metrics["DecayScore"] or 0.5
+        t = self.metrics["TruthScore"] or 0.75
+        min_truth = float(self.cfg["fir"]["fir"]["min_truth_score"])
+
+        actions = []
+        if n > 0.7:  actions.append("EFB: tighten filter")
+        if s == "CONFLICT": actions.append("CTPS: pause publishing")
+        if d > 0.7:  actions.append("PDM+: retire stale patterns")
+        if t < min_truth: actions.append("FIR: root-cause trace")
+        if not actions: actions.append("All systems stable")
+
+        event = {
+            "time": time.strftime("%H:%M:%S"),
+            "metrics": self.metrics.copy(),
+            "actions": actions,
+        }
+        self.history.append(event)
+        return event
