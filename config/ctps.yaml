@@ -1,0 +1,9 @@
+ctps:
+  macro_weight: 0.60
+  event_sensitivity: high
+  horizons:
+    micro: "1-15m"
+    meso: "1-4h"
+    macro: "1-30d"
+  phase_states: [ALIGNED, DRIFT, CONFLICT]
+  publish_whitelist: [ALIGNED, DRIFT_MILD]
