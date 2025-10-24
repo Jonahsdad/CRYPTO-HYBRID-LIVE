@@ -1,0 +1,11 @@
+fir:
+  min_truth_score: 0.72
+  quarantine_window_minutes: 90
+  truth_score_weights:
+    abs_error: 0.45
+    rel_error: 0.25
+    ctps_conflict_penalty: 0.15
+    data_quality: 0.15
+  actions:
+    pass: ["publish", "vault"]
+    quarantine: ["hold", "root_cause_trace", "notify_nbc"]
