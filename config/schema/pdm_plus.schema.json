@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "pdm_plus": {
+      "type": "object",
+      "properties": {
+        "min_half_life_days": {"type": "integer", "minimum": 1},
+        "regime_awareness": {"type": "boolean"},
+        "windows": {
+          "type": "object",
+          "properties": {
+            "perf_short_days": {"type": "integer", "minimum": 1},
+            "perf_mid_days": {"type": "integer", "minimum": 1},
+            "perf_long_days": {"type": "integer", "minimum": 1}
+          },
+          "required": ["perf_short_days", "perf_mid_days", "perf_long_days"]
+        },
+        "decay": {
+          "type": "object",
+          "properties": {
+            "method": {"type": "string", "enum": ["exponential"]},
+            "retire_threshold": {"type": "number", "minimum": 0, "maximum": 1},
+            "shrink_range": {
+              "type": "array",
+              "items": {"type": "number"},
+              "minItems": 2,
+              "maxItems": 2
+            }
+          },
+          "required": ["method", "retire_threshold", "shrink_range"]
+        }
+      },
+      "required": ["min_half_life_days", "regime_awareness", "windows", "decay"]
+    }
+  },
+  "required": ["pdm_plus"]
+}
