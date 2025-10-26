@@ -23,7 +23,6 @@ def parse_draws_text(s: str) -> List[int]:
 def parse_draws_csv(file) -> List[int]:
     try:
         df = pd.read_csv(file)
-        # common column names
         for col in ["draw","Draw","number","Number","value","Value"]:
             if col in df.columns:
                 vals = [int(x) for x in df[col].dropna().tolist()]
@@ -79,7 +78,7 @@ tab_forecast, tab_logs, tab_settings, tab_help = st.tabs(["📈 Forecast", "📜
 if "run_ledger" not in st.session_state:
     st.session_state.run_ledger = []
 
-# Settings to engine
+# Settings passed to engine
 settings = {
     "Session": session,
     "RollingMemory": int(rolling_memory),
