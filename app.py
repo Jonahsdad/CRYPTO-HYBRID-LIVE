@@ -1,21 +1,47 @@
+# ===========================
+# LIPE DASHBOARD (HYBRID)
+# One-file, drop-in app.py
+# ===========================
+
+# --- import path guard (cloud-safe) ---
 import sys, os
 sys.path.append(os.path.dirname(__file__))
+
+import json
+import time
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from datetime import datetime
-from typing import List, Dict, Any
+import requests
 
-# ========= LIPE CORE =========
+# --- LOCAL ENGINE (expects lipe_core.py next to this file) ---
 # lipe_core.py must define class LIPE with:
-# - ping() -> dict
-# - run_forecast(game:str, draws:List[int], settings:dict) -> dict
-# - log(msg:str)
-# - logs: list[str]
-from lipe_core import LIPE
+#   - ping() -> dict
+#   - run_forecast(game:str, draws:List[int], settings:dict) -> dict
+#   - log(msg:str)
+#   - logs: list[str]
+try:
+    from lipe_core import LIPE
+except Exception as e:
+    LIPE = None  # Remote API mode can still run without local import
+    st.session_state["_import_error"] = f"Local LIPE unavailable: {e}"
 
-# ---------- helpers ----------
+# ===========================
+# CONFIG / CONSTANTS
+# ===========================
+API_URL_DEFAULT = "https://YOUR-FORECAST-API.example.com"  # set your FastAPI URL when ready
+API_URL = os.getenv("LIPE_API_URL", API_URL_DEFAULT)
+
+APP_TITLE = "🧠 LIPE — Living Intelligence Predictive Engine"
+APP_SUBTITLE = "Hybrid dashboard (Local Engine or Remote API)"
+
+# ===========================
+# UTILITIES
+# ===========================
 def parse_draws_text(s: str) -> List[int]:
     try:
         return [int(x.strip()) for x in s.split(",") if x.strip()]
@@ -25,7 +51,7 @@ def parse_draws_text(s: str) -> List[int]:
 def parse_draws_csv(file) -> List[int]:
     try:
         df = pd.read_csv(file)
-        for col in ["draw","Draw","number","Number","value","Value"]:
+        for col in ["draw", "Draw", "number", "Number", "value", "Value"]:
             if col in df.columns:
                 vals = [int(x) for x in df[col].dropna().tolist()]
                 if vals:
@@ -40,47 +66,178 @@ def downloadable_csv(rows: List[Dict[str, Any]]) -> bytes:
     df = pd.DataFrame(rows)
     return df.to_csv(index=False).encode("utf-8")
 
-# ========= UI =========
+def entropy_score(digits: List[int]) -> float:
+    if not digits:
+        return 0.0
+    vals, counts = np.unique(digits, return_counts=True)
+    p = counts / counts.sum()
+    h = -np.sum(p * np.log2(p))
+    return float(h / np.log2(max(2, len(vals))))  # normalized 0..1
+
+def safe_metric(val, fmt=lambda x: x):
+    try:
+        return fmt(val)
+    except Exception:
+        return "—"
+
+# ===========================
+# REMOTE API CLIENT (HYBRID)
+# ===========================
+def api_health(url: str) -> Optional[Dict[str, Any]]:
+    try:
+        r = requests.get(f"{url.rstrip('/')}/health", timeout=5)
+        r.raise_for_status()
+        return r.json()
+    except Exception:
+        return None
+
+def api_forecast(url: str, game: str, draws: List[int], settings: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {"game": game, "draws": draws, "settings": settings}
+    r = requests.post(f"{url.rstrip('/')}/forecast", json=payload, timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+# ===========================
+# PANELS (Charts / Crypto / Lottery / Vault)
+# ===========================
+def charts_panel(forecast: Optional[Dict[str, Any]], recent_draws: List[int]):
+    st.markdown("### 📊 Charts")
+    if not forecast:
+        st.info("Run a forecast to view charts.")
+        return
+
+    # Entropy trend demo (single matplotlib plot, no explicit colors)
+    if recent_draws:
+        ent_now = float(forecast.get("entropy", 0.5))
+        series = np.linspace(max(0.05, ent_now - 0.2), min(1.0, ent_now + 0.2), 12)
+        fig, ax = plt.subplots()
+        ax.plot(series)
+        ax.set_title("Entropy Trend")
+        ax.set_xlabel("Window")
+        ax.set_ylabel("Entropy (0..1)")
+        st.pyplot(fig)
+    else:
+        st.info("Provide draws for entropy visualization.")
+
+def crypto_panel():
+    st.markdown("### 💰 Crypto Hybrid")
+    st.caption("Live prices via CoinGecko (public endpoint).")
+    coins = ["bitcoin", "ethereum", "solana", "dogecoin"]
+    data = []
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": ",".join(coins), "vs_currencies": "usd"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        js = r.json()
+        for c in coins:
+            if c in js and "usd" in js[c]:
+                data.append({"Coin": c.title(), "Price (USD)": js[c]["usd"]})
+        if data:
+            df = pd.DataFrame(data)
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.warning("No data returned from CoinGecko.")
+    except Exception as e:
+        st.error(f"Crypto fetch failed: {e}")
+
+def lottery_panel(engine_local: Optional[Any]):
+    st.markdown("### 🎲 Lottery Tools")
+    st.caption("Quick single-run utility using current LIPE settings.")
+    txt = st.text_input("Enter draws (comma-separated)", value="439,721,105,387,902,114,296,431")
+    col1, col2 = st.columns(2)
+    g = col1.selectbox("Game", ["Pick 3", "Pick 4", "Lucky Day Lotto"])
+    mem = col2.slider("Rolling Memory (local)", 10, 240, 60, step=5)
+
+    if st.button("Run Lottery Forecast (Local)"):
+        if not engine_local:
+            st.error("Local engine not available.")
+            return
+        try:
+            draws = parse_draws_text(txt)
+            result = engine_local.run_forecast(
+                game=g,
+                draws=draws,
+                settings={"RollingMemory": mem, "Session": "Evening", "BonusWeighting": "Moderate",
+                          "UseNBC": True, "UseRP": True, "UseEcho": True},
+            )
+            st.json(result)
+        except Exception as e:
+            st.error(f"Local run failed: {e}")
+
+def vault_panel(engine_logs: Optional[List[str]], run_ledger: List[Dict[str, Any]]):
+    st.markdown("### 🧠 Vault / Logs")
+    colL, colR = st.columns(2)
+
+    with colL:
+        st.markdown("#### Engine Logs")
+        if engine_logs:
+            for line in engine_logs[-250:]:
+                st.text(line)
+        else:
+            st.info("No logs yet.")
+
+    with colR:
+        st.markdown("#### Download Run Ledger")
+        if run_ledger:
+            st.download_button(
+                "Download CSV",
+                data=downloadable_csv(run_ledger),
+                file_name="lipe_runs.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("Run a forecast to populate the ledger.")
+
+# ===========================
+# STREAMLIT APP
+# ===========================
 st.set_page_config(page_title="LIPE Dashboard", layout="wide")
-st.title("🧠 LIPE — Living Intelligence Predictive Engine")
+st.title(APP_TITLE)
+st.caption(APP_SUBTITLE)
 
-engine = LIPE()
-status = engine.ping() if hasattr(engine, "ping") else {
-    "name":"LIPE","tier":33,"status":"Active","boot_time":datetime.now().isoformat(timespec="seconds")
-}
-st.caption(f"{status.get('name','LIPE')} · Tier {status.get('tier','—')} · {status.get('status','—')} · Boot {status.get('boot_time','—')}")
+# Engine mode (Hybrid)
+st.sidebar.header("Engine Mode")
+engine_mode = st.sidebar.radio("Compute", ["Local (in-app)", "Remote API"], index=0)
+custom_api = st.sidebar.text_input("API URL (optional)", value=API_URL)
 
-# Sidebar — controls
+# Controls
 st.sidebar.header("Controls")
 game = st.sidebar.selectbox("Game", ["Pick 3", "Pick 4", "Lucky Day Lotto"])
 session = st.sidebar.radio("Session", ["Midday", "Evening"], index=0)
 rolling_memory = st.sidebar.slider("Rolling Memory (draws)", 10, 240, 60, step=5)
-bonus_weighting = st.sidebar.select_slider("Bonus Weighting", options=["None","Light","Moderate","Heavy"], value="Moderate")
+bonus_weighting = st.sidebar.select_slider("Bonus Weighting", options=["None", "Light", "Moderate", "Heavy"], value="Moderate")
 
-st.sidebar.subheader("Strategy Switches")
+st.sidebar.subheader("Strategy")
 use_nbc  = st.sidebar.toggle("NBC Triggers", value=True)
 use_rp   = st.sidebar.toggle("RP Memory Recall", value=True)
 use_echo = st.sidebar.toggle("Echo Logic", value=True)
 
 st.sidebar.divider()
-st.sidebar.subheader("Recent draws input")
-draws_text = st.sidebar.text_area("A) Paste comma-separated integers", value="439,721,105,387,902,114,296,431", height=80)
+st.sidebar.subheader("Recent draws")
+draws_text = st.sidebar.text_area("A) Paste as comma-separated integers", value="439,721,105,387,902,114,296,431", height=80)
 uploaded   = st.sidebar.file_uploader("B) Or upload CSV with a 'draw' column", type=["csv"])
 run_btn    = st.sidebar.button("Run Forecast")
 
-# Build draws list
+# Build draws
 recent_draws = parse_draws_csv(uploaded) if uploaded else parse_draws_text(draws_text)
 if not recent_draws:
-    st.warning("Provide recent draws: paste comma-separated values OR upload a CSV containing a `draw` column.", icon="⚠️")
+    st.warning("Provide recent draws: paste comma-separated values OR upload a CSV with a `draw` column.", icon="⚠️")
 
-# Tabs
-tab_forecast, tab_logs, tab_settings, tab_help = st.tabs(["📈 Forecast", "📜 Vault / Logs", "⚙️ Settings Echo", "❓ Help"])
+# Initialize local engine
+engine = LIPE() if LIPE else None
+status = engine.ping() if engine and hasattr(engine, "ping") else {
+    "name": "LIPE", "tier": 33, "status": "Active", "boot_time": datetime.now().isoformat(timespec="seconds")
+}
+st.caption(f"{status.get('name','LIPE')} · Tier {status.get('tier','—')} · {status.get('status','—')} · Boot {status.get('boot_time','—')}")
 
-# Persist run ledger
+# Ledger
 if "run_ledger" not in st.session_state:
     st.session_state.run_ledger = []
 
-# Settings passed to engine
+# Settings object shared with engine/API
 settings = {
     "Session": session,
     "RollingMemory": int(rolling_memory),
@@ -90,108 +247,148 @@ settings = {
     "UseEcho": bool(use_echo),
 }
 
-with tab_forecast:
+# Tabs
+tabs = st.tabs(["📈 Forecast", "📊 Charts", "💰 Crypto", "🎲 Lottery", "📜 Vault", "⚙️ Settings", "❓ Help"])
+forecast_result: Optional[Dict[str, Any]] = None
+
+with tabs[0]:
     st.subheader("Forecast")
     if run_btn and recent_draws:
         try:
-            if not hasattr(engine, "run_forecast"):
-                raise AttributeError("lipe_core.LIPE lacks run_forecast(). Add it per template.")
-            result: Dict[str, Any] = engine.run_forecast(game=game, draws=recent_draws, settings=settings)
+            if engine_mode.startswith("Remote"):
+                # Remote API call
+                health = api_health(custom_api)
+                if not health:
+                    st.error("Remote API unreachable. Check LIPE_API_URL or 'API URL' above.")
+                else:
+                    t0 = time.time()
+                    forecast_result = api_forecast(custom_api, game, recent_draws, settings)
+                    t1 = time.time()
+                    # metrics row
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Confidence", safe_metric(forecast_result.get("confidence", 0), lambda x: f"{int(float(x)*100)}%"))
+                    c2.metric("Entropy",   safe_metric(forecast_result.get("entropy", 0.0), lambda x: f"{float(x):.2f}"))
+                    c3.metric("Engine",    forecast_result.get("logic", "—"))
+                    c4.metric("Latency",   f"{(t1 - t0)*1000:.0f} ms")
 
-            required = {"game","top_picks","alts","confidence","entropy","logic"}
-            if not required.issubset(result.keys()):
-                raise ValueError(f"run_forecast() must return keys {required}. Got {list(result.keys())}")
+                    st.markdown("**Top Picks**")
+                    st.code(", ".join(map(str, forecast_result.get("top_picks", []))))
 
-            # Metrics row
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Confidence", f"{int(float(result['confidence'])*100)}%")
-            c2.metric("Entropy",   f"{float(result['entropy']):.2f}")
-            c3.metric("Engine",    result.get("logic","—"))
-            c4.metric("Session",   settings['Session'])
+                    st.markdown("**Alternates**")
+                    st.code(", ".join(map(str, forecast_result.get("alts", []))))
 
-            # Picks
-            st.markdown("**Top Picks**")
-            st.code(", ".join(map(str, result["top_picks"])))
-            st.markdown("**Alternates**")
-            st.code(", ".join(map(str, result.get("alts", []))))
+                    st.caption(f"Trace: {forecast_result.get('trace_id','—')} · Model: {forecast_result.get('model_version','—')}")
 
-            # Notes (optional)
-            if result.get("notes"):
-                with st.expander("Engine Notes"):
-                    st.write(result["notes"])
+                    st.session_state.run_ledger.append({
+                        "ts": datetime.now().isoformat(timespec="seconds"),
+                        "mode": "remote",
+                        "game": forecast_result.get("game", game),
+                        "session": settings["Session"],
+                        "confidence": forecast_result.get("confidence", None),
+                        "entropy": forecast_result.get("entropy", None),
+                        "top_picks": "|".join(map(str, forecast_result.get("top_picks", []))),
+                        "alts": "|".join(map(str, forecast_result.get("alts", []))),
+                        "logic": forecast_result.get("logic", ""),
+                        "RollingMemory": settings["RollingMemory"],
+                        "BonusWeighting": settings["BonusWeighting"],
+                        "NBC": settings["UseNBC"],
+                        "RP": settings["UseRP"],
+                        "Echo": settings["UseEcho"],
+                        "latency_ms": int((t1 - t0) * 1000),
+                    })
 
-            # Entropy trend (matplotlib, single plot, no explicit colors)
-            if len(recent_draws) >= 10:
-                ent_now = float(result["entropy"])
-                series = np.linspace(max(0.05, ent_now-0.2), min(1.0, ent_now+0.2), 12)
-                fig, ax = plt.subplots()
-                ax.plot(series)
-                ax.set_title("Entropy Trend")
-                ax.set_xlabel("Window")
-                ax.set_ylabel("Entropy (0..1)")
-                st.pyplot(fig)
+            else:
+                # Local engine call
+                if not engine or not hasattr(engine, "run_forecast"):
+                    raise RuntimeError("Local engine not available.")
+                t0 = time.time()
+                forecast_result = engine.run_forecast(game=game, draws=recent_draws, settings=settings)
+                t1 = time.time()
 
-            # Vault log + ledger
-            try:
-                engine.log(f"{datetime.now().isoformat(timespec='seconds')} · {result['game']} {settings['Session']} · conf={result['confidence']} · top={result['top_picks']}")
-            except Exception:
-                pass
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Confidence", safe_metric(forecast_result.get("confidence", 0), lambda x: f"{int(float(x)*100)}%"))
+                c2.metric("Entropy",   safe_metric(forecast_result.get("entropy", 0.0), lambda x: f"{float(x):.2f}"))
+                c3.metric("Engine",    forecast_result.get("logic", "—"))
+                c4.metric("Latency",   f"{(t1 - t0)*1000:.0f} ms")
 
-            st.session_state.run_ledger.append({
-                "ts": datetime.now().isoformat(timespec="seconds"),
-                "game": result["game"],
-                "session": settings["Session"],
-                "confidence": result["confidence"],
-                "entropy": result["entropy"],
-                "top_picks": "|".join(map(str, result["top_picks"])),
-                "alts": "|".join(map(str, result.get("alts", []))),
-                "logic": result.get("logic",""),
-                "RollingMemory": settings["RollingMemory"],
-                "BonusWeighting": settings["BonusWeighting"],
-                "NBC": settings["UseNBC"],
-                "RP": settings["UseRP"],
-                "Echo": settings["UseEcho"]
-            })
+                st.markdown("**Top Picks**")
+                st.code(", ".join(map(str, forecast_result.get("top_picks", []))))
 
+                st.markdown("**Alternates**")
+                st.code(", ".join(map(str, forecast_result.get("alts", []))))
+
+                if hasattr(engine, "log"):
+                    try:
+                        engine.log(f"{datetime.now().isoformat(timespec='seconds')} · {forecast_result.get('game', game)} {settings['Session']} · conf={forecast_result.get('confidence','?')}")
+                    except Exception:
+                        pass
+
+                st.session_state.run_ledger.append({
+                    "ts": datetime.now().isoformat(timespec="seconds"),
+                    "mode": "local",
+                    "game": forecast_result.get("game", game),
+                    "session": settings["Session"],
+                    "confidence": forecast_result.get("confidence", None),
+                    "entropy": forecast_result.get("entropy", None),
+                    "top_picks": "|".join(map(str, forecast_result.get("top_picks", []))),
+                    "alts": "|".join(map(str, forecast_result.get("alts", []))),
+                    "logic": forecast_result.get("logic", ""),
+                    "RollingMemory": settings["RollingMemory"],
+                    "BonusWeighting": settings["BonusWeighting"],
+                    "NBC": settings["UseNBC"],
+                    "RP": settings["UseRP"],
+                    "Echo": settings["UseEcho"],
+                    "latency_ms": int((t1 - t0) * 1000),
+                })
+
+        except requests.HTTPError as http_e:
+            st.error(f"API error: {http_e} · Body: {getattr(http_e, 'response', None) and http_e.response.text}")
         except Exception as e:
             st.error(f"Forecast error: {e}")
+    else:
+        st.info("Choose settings, provide draws, then click **Run Forecast**.")
 
-with tab_logs:
-    colL, colR = st.columns(2)
-    with colL:
-        st.markdown("### Vault Log")
-        if hasattr(engine, "logs") and engine.logs:
-            for line in engine.logs[-250:]:
-                st.text(line)
-        else:
-            st.info("No logs yet.")
-    with colR:
-        st.markdown("### Download Run Ledger")
-        if st.session_state.run_ledger:
-            st.download_button(
-                "Download CSV",
-                data=downloadable_csv(st.session_state.run_ledger),
-                file_name="lipe_runs.csv",
-                mime="text/csv"
-            )
-        else:
-            st.info("Run a forecast to populate the ledger.")
+with tabs[1]:
+    charts_panel(forecast_result, recent_draws)
 
-with tab_settings:
-    st.write("**Active Settings**")
-    st.json(settings)
-    st.caption("Edit settings in the sidebar, then re-run.")
+with tabs[2]:
+    crypto_panel()
 
-with tab_help:
+with tabs[3]:
+    lottery_panel(engine)
+
+with tabs[4]:
+    logs = getattr(engine, "logs", []) if engine else []
+    vault_panel(logs, st.session_state.run_ledger)
+
+with tabs[5]:
+    st.subheader("Active Settings")
+    st.json({
+        "engine_mode": engine_mode,
+        "api_url": custom_api,
+        "game": game,
+        "settings": settings,
+        "draws_count": len(recent_draws),
+    })
+    if "_import_error" in st.session_state:
+        st.warning(st.session_state["_import_error"])
+
+with tabs[6]:
     st.markdown("""
 **How to use**
-1. Choose game (Pick 3 / Pick 4 / Lucky Day).
-2. Paste draws like `439,721,105,...` or upload CSV with a `draw` column.
-3. Adjust strategy switches (NBC / RP / Echo) and memory/weighting.
-4. Click **Run Forecast**. Review confidence, entropy, picks.
-5. Check **Vault / Logs** for audit. Download the run ledger if needed.
+1) Select **Engine Mode** (Local/Remote).  
+2) Choose **Game**, set **Session**, memory and strategy toggles.  
+3) Paste draws or upload CSV (with `draw` column).  
+4) Click **Run Forecast** → review picks, confidence, entropy, charts.  
+5) Use **Vault** to inspect logs and download the run ledger.
 
-**Install your latest LIPE logic**
-- Put your real logic inside `LIPE.run_forecast()` in `lipe_core.py`.
-- Keep the return keys: `game, top_picks, alts, confidence, entropy, logic`.
+**Hybrid notes**
+- Local mode calls `lipe_core.py` in this repo.  
+- Remote mode calls your FastAPI at `LIPE_API_URL` or the URL above.  
+- Switch anytime via the sidebar toggle.
+
+**Next**
+- Point `LIPE_API_URL` to your FastAPI service to scale globally.  
+- Add caching/queues in the API for heavy traffic.  
+- Keep Streamlit for internal analytics & premium dashboards.
 """)
