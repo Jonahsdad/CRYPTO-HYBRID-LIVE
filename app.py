@@ -1,4 +1,4 @@
-# HYBRID INTELLIGENCE SYSTEMS - Full App (Neon UX + Plotly + Astro Hybrid)
+HYBRID INTELLIGENCE SYSTEMS - Full App (Neon UX + Plotly + Astro Hybrid)
 # Single-file drop-in. No external python modules required.
 
 import sys, os, time, math, random
