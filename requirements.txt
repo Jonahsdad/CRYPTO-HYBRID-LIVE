@@ -1,7 +1,4 @@
-streamlit
-pandas
-numpy
-requests
-plotly
-yfinance
-lxml
+streamlit>=1.36.0
+pandas>=2.2.0
+numpy>=1.26.0
+matplotlib>=3.8.0
