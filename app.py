@@ -1,5 +1,5 @@
-HYBRID INTELLIGENCE SYSTEMS — Neon UX
-# app.py — full, drop-in (landing tiles + minimal sidebar)
+# HYBRID INTELLIGENCE SYSTEMS - Neon UX
+# app.py - full, drop-in (landing tiles + minimal sidebar)
 # ===========================
 
 import sys, os
