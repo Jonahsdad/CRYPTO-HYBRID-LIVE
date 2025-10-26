@@ -1,194 +1,196 @@
-# =====================================================
-# CRYPTO HYBRID LIVE — single-file Streamlit app
-# Author: Jesse Ray Landingham Jr
-# =====================================================
-
-from __future__ import annotations
-import numpy as np
-import pandas as pd
-import requests
 import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from datetime import datetime
+from typing import List, Dict, Any
 
-# Optional deps
-try:
-    import plotly.express as px
-    HAS_PX = True
-except Exception:
-    HAS_PX = False
+# ========= LIPE CORE =========
+# lipe_core.py must define class LIPE with:
+# - ping() -> dict
+# - run_forecast(game:str, draws:List[int], settings:dict) -> dict
+# - log(msg:str)
+# - logs: list[str]
+from lipe_core import LIPE
 
-try:
-    import yfinance as yf
-    HAS_YF = True
-except Exception:
-    HAS_YF = False
-
-# ----------------------- Page config -----------------------
-st.set_page_config(
-    page_title="Crypto Hybrid Live",
-    layout="wide",
-    page_icon="🚀",
-    initial_sidebar_state="expanded",
-)
-
-# ----------------------- CSS -----------------------
-st.markdown("""
-<style>
-.hero {
-  margin:8px 0 18px 0;
-  padding:14px 18px;
-  border-radius:14px;
-  border:1px solid #0d253a;
-  background:radial-gradient(120% 160% at 0% 0%, #0f172a 0%, #052c3b 40%, #0b1f33 100%);
-  color:#e6f1ff;
-  box-shadow:0 8px 28px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
-}
-.hero h1{font-size:34px;margin:4px 0 2px 0;}
-.hero .sub{opacity:.85;font-size:13px;}
-.badge-row{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap;}
-.badge{display:inline-flex;align-items:center;gap:8px;
-  padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.08);
-  background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));
-  color:#e6f1ff;font-weight:700;font-size:13px;}
-.kpi{background:#0e1726;border:1px solid #14243a;border-radius:12px;padding:12px 14px;}
-.kpi .label{opacity:.8;font-size:12px}
-.kpi .value{font-weight:800;font-size:18px}
-</style>
-""", unsafe_allow_html=True)
-
-# ----------------------- Hero -----------------------
-st.markdown("""
-<div class="hero">
-  <h1>🚀 CRYPTO HYBRID LIVE</h1>
-  <div class="sub">Powered by <b>Jesse Ray Landingham Jr</b></div>
-  <div class="badge-row">
-    <div class="badge">🔥 RAW</div>
-    <div class="badge">💧 TRUTH</div>
-    <div class="badge">⭐ CONFLUENCE</div>
-    <div class="badge">⚡ Δ (RAW↔TRUTH)</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-# =====================================================
-# Helpers
-# =====================================================
-@st.cache_data(ttl=300)
-def cg_top_market(per_page:int=20)->pd.DataFrame:
-    url="https://api.coingecko.com/api/v3/coins/markets"
-    params=dict(vs_currency="usd",order="market_cap_desc",per_page=per_page,page=1,
-                sparkline=False,price_change_percentage="24h")
+# ---------- helpers ----------
+def parse_draws_text(s: str) -> List[int]:
     try:
-        r=requests.get(url,params=params,timeout=12)
-        r.raise_for_status()
-        d=pd.DataFrame(r.json())
-        cols=["name","symbol","current_price","market_cap","price_change_percentage_24h"]
-        d=d[cols].rename(columns={
-            "name":"Name","symbol":"Symbol","current_price":"Price (USD)",
-            "market_cap":"Market Cap","price_change_percentage_24h":"24h %"})
-        return d
-    except Exception as e:
-        st.warning(f"⚠️ CoinGecko error: {e}. Using fallback.")
-        return pd.DataFrame({
-            "Name":["Bitcoin","Ethereum","Solana","XRP","Cardano"],
-            "Symbol":["BTC","ETH","SOL","XRP","ADA"],
-            "Price (USD)":[67000,3500,180,0.52,0.25],
-            "Market Cap":[1.2e12,7.5e11,8.0e10,2.8e10,1.0e10],
-            "24h %":[2.4,-1.2,0.6,-0.8,3.1],
-        })
-
-@st.cache_data(ttl=3600)
-def load_sp500_universe()->pd.DataFrame:
-    try:
-        url="https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        df=pd.read_html(url)[0]
-        df=df.rename(columns={"Symbol":"Symbol","Security":"Security",
-                              "GICS Sector":"GICS Sector",
-                              "GICS Sub-Industry":"GICS Sub-Industry"})
-        return df[["Symbol","Security","GICS Sector","GICS Sub-Industry"]]
+        return [int(x.strip()) for x in s.split(",") if x.strip()]
     except Exception:
-        st.warning("⚠️ Wikipedia unreachable – using fallback.")
-        return pd.DataFrame({
-            "Symbol":["AAPL","MSFT","GOOGL","AMZN","META"],
-            "Security":["Apple","Microsoft","Alphabet","Amazon","Meta Platforms"],
-            "GICS Sector":["Information Technology"]*5,
-            "GICS Sub-Industry":["Consumer Electronics","Systems Software",
-                                 "Interactive Media","E-Commerce","Social Media"]
-        })
+        return []
 
-def attach_latest_prices(df:pd.DataFrame,n:int=10)->pd.DataFrame:
-    out=df.copy()
-    if out.empty: return out
-    syms=out["Symbol"].astype(str).str.replace(".","-",regex=False).head(n)
-    if HAS_YF:
+def parse_draws_csv(file) -> List[int]:
+    try:
+        df = pd.read_csv(file)
+        # common column names
+        for col in ["draw","Draw","number","Number","value","Value"]:
+            if col in df.columns:
+                vals = [int(x) for x in df[col].dropna().tolist()]
+                if vals:
+                    return vals
+        return []
+    except Exception:
+        return []
+
+def downloadable_csv(rows: List[Dict[str, Any]]) -> bytes:
+    if not rows:
+        return b""
+    df = pd.DataFrame(rows)
+    return df.to_csv(index=False).encode("utf-8")
+
+# ========= UI =========
+st.set_page_config(page_title="LIPE Dashboard", layout="wide")
+st.title("🧠 LIPE — Living Intelligence Predictive Engine")
+
+engine = LIPE()
+status = engine.ping() if hasattr(engine, "ping") else {
+    "name":"LIPE","tier":33,"status":"Active","boot_time":datetime.now().isoformat(timespec="seconds")
+}
+st.caption(f"{status.get('name','LIPE')} · Tier {status.get('tier','—')} · {status.get('status','—')} · Boot {status.get('boot_time','—')}")
+
+# Sidebar — controls
+st.sidebar.header("Controls")
+game = st.sidebar.selectbox("Game", ["Pick 3", "Pick 4", "Lucky Day Lotto"])
+session = st.sidebar.radio("Session", ["Midday", "Evening"], index=0)
+rolling_memory = st.sidebar.slider("Rolling Memory (draws)", 10, 240, 60, step=5)
+bonus_weighting = st.sidebar.select_slider("Bonus Weighting", options=["None","Light","Moderate","Heavy"], value="Moderate")
+
+st.sidebar.subheader("Strategy Switches")
+use_nbc  = st.sidebar.toggle("NBC Triggers", value=True)
+use_rp   = st.sidebar.toggle("RP Memory Recall", value=True)
+use_echo = st.sidebar.toggle("Echo Logic", value=True)
+
+st.sidebar.divider()
+st.sidebar.subheader("Recent draws input")
+draws_text = st.sidebar.text_area("A) Paste comma-separated integers", value="439,721,105,387,902,114,296,431", height=80)
+uploaded   = st.sidebar.file_uploader("B) Or upload CSV with a 'draw' column", type=["csv"])
+run_btn    = st.sidebar.button("Run Forecast")
+
+# Build draws list
+recent_draws = parse_draws_csv(uploaded) if uploaded else parse_draws_text(draws_text)
+if not recent_draws:
+    st.warning("Provide recent draws: paste comma-separated values OR upload a CSV containing a `draw` column.", icon="⚠️")
+
+# Tabs
+tab_forecast, tab_logs, tab_settings, tab_help = st.tabs(["📈 Forecast", "📜 Vault / Logs", "⚙️ Settings Echo", "❓ Help"])
+
+# Persist run ledger
+if "run_ledger" not in st.session_state:
+    st.session_state.run_ledger = []
+
+# Settings to engine
+settings = {
+    "Session": session,
+    "RollingMemory": int(rolling_memory),
+    "BonusWeighting": str(bonus_weighting),
+    "UseNBC": bool(use_nbc),
+    "UseRP": bool(use_rp),
+    "UseEcho": bool(use_echo),
+}
+
+with tab_forecast:
+    st.subheader("Forecast")
+    if run_btn and recent_draws:
         try:
-            prices=[]
-            for s in syms:
-                try:
-                    h=yf.Ticker(s).history(period="1d")
-                    prices.append(float(h["Close"].iloc[-1]))
-                except Exception:
-                    prices.append(np.nan)
-            out.loc[out.index[:len(prices)],"Latest Price"]=prices
-            if out["Latest Price"].isna().all():
-                raise RuntimeError("No yfinance prices.")
-            return out
+            if not hasattr(engine, "run_forecast"):
+                raise AttributeError("lipe_core.LIPE lacks run_forecast(). Add it per template.")
+            result: Dict[str, Any] = engine.run_forecast(game=game, draws=recent_draws, settings=settings)
+
+            required = {"game","top_picks","alts","confidence","entropy","logic"}
+            if not required.issubset(result.keys()):
+                raise ValueError(f"run_forecast() must return keys {required}. Got {list(result.keys())}")
+
+            # Metrics row
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Confidence", f"{int(float(result['confidence'])*100)}%")
+            c2.metric("Entropy",   f"{float(result['entropy']):.2f}")
+            c3.metric("Engine",    result.get("logic","—"))
+            c4.metric("Session",   settings['Session'])
+
+            # Picks
+            st.markdown("**Top Picks**")
+            st.code(", ".join(map(str, result["top_picks"])))
+            st.markdown("**Alternates**")
+            st.code(", ".join(map(str, result.get("alts", []))))
+
+            # Notes (optional)
+            if result.get("notes"):
+                with st.expander("Engine Notes"):
+                    st.write(result["notes"])
+
+            # Entropy trend (matplotlib, single plot, no explicit colors)
+            if len(recent_draws) >= 10:
+                ent_now = float(result["entropy"])
+                series = np.linspace(max(0.05, ent_now-0.2), min(1.0, ent_now+0.2), 12)
+                fig, ax = plt.subplots()
+                ax.plot(series)
+                ax.set_title("Entropy Trend")
+                ax.set_xlabel("Window")
+                ax.set_ylabel("Entropy (0..1)")
+                st.pyplot(fig)
+
+            # Vault log + ledger
+            try:
+                engine.log(f"{datetime.now().isoformat(timespec='seconds')} · {result['game']} {settings['Session']} · conf={result['confidence']} · top={result['top_picks']}")
+            except Exception:
+                pass
+
+            st.session_state.run_ledger.append({
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "game": result["game"],
+                "session": settings["Session"],
+                "confidence": result["confidence"],
+                "entropy": result["entropy"],
+                "top_picks": "|".join(map(str, result["top_picks"])),
+                "alts": "|".join(map(str, result.get("alts", []))),
+                "logic": result.get("logic",""),
+                "RollingMemory": settings["RollingMemory"],
+                "BonusWeighting": settings["BonusWeighting"],
+                "NBC": settings["UseNBC"],
+                "RP": settings["UseRP"],
+                "Echo": settings["UseEcho"]
+            })
+
         except Exception as e:
-            st.warning(f"⚠️ yfinance error: {e}. Using synthetic fallback.")
-    out["Latest Price"]=np.random.default_rng(42).uniform(80,350,len(out)).round(2)
-    return out
+            st.error(f"Forecast error: {e}")
 
-# =====================================================
-# Views
-# =====================================================
-def view_crypto_dashboard():
-    st.subheader("📊 Market Overview (Crypto)")
-    df=cg_top_market(20)
-    c1,c2,c3,c4=st.columns(4)
-    c1.markdown(f'<div class="kpi"><div class="label">Assets</div>'
-                f'<div class="value">{len(df)}</div></div>',unsafe_allow_html=True)
-    c2.markdown(f'<div class="kpi"><div class="label">Avg 24h %</div>'
-                f'<div class="value">{df["24h %"].mean():.2f}%</div></div>',unsafe_allow_html=True)
-    c3.markdown(f'<div class="kpi"><div class="label">Top Price</div>'
-                f'<div class="value">${df["Price (USD)"].max():,.0f}</div></div>',unsafe_allow_html=True)
-    c4.markdown(f'<div class="kpi"><div class="label">Median Cap</div>'
-                f'<div class="value">${df["Market Cap"].median():,.0f}</div></div>',unsafe_allow_html=True)
-    st.dataframe(df,use_container_width=True,height=380)
-    if HAS_PX:
-        fig=px.bar(df.head(10),x="Symbol",y="24h %",title="Top 10 — 24h Change (%)",color="24h %")
-        st.plotly_chart(fig,use_container_width=True)
+with tab_logs:
+    colL, colR = st.columns(2)
+    with colL:
+        st.markdown("### Vault Log")
+        if hasattr(engine, "logs") and engine.logs:
+            for line in engine.logs[-250:]:
+                st.text(line)
+        else:
+            st.info("No logs yet.")
+    with colR:
+        st.markdown("### Download Run Ledger")
+        if st.session_state.run_ledger:
+            st.download_button(
+                "Download CSV",
+                data=downloadable_csv(st.session_state.run_ledger),
+                file_name="lipe_runs.csv",
+                mime="text/csv"
+            )
+        else:
+            st.info("Run a forecast to populate the ledger.")
 
-def view_sp500():
-    st.subheader("🏛️ S&P 500 — Live Snapshot")
-    base=load_sp500_universe()
-    st.dataframe(base.head(20),use_container_width=True,height=360)
-    priced=attach_latest_prices(base,10)
-    if "Latest Price" in priced.columns:
-        st.success("✅ Prices attached (yfinance or fallback).")
-        st.dataframe(priced.head(10),use_container_width=True)
-        if HAS_PX:
-            fig=px.bar(priced.head(10),x="Symbol",y="Latest Price",title="Latest Prices (sample)")
-            st.plotly_chart(fig,use_container_width=True)
+with tab_settings:
+    st.write("**Active Settings**")
+    st.json(settings)
+    st.caption("Edit settings in the sidebar, then re-run.")
 
-def view_forecast():
-    st.subheader("🧠 Forecast (coming soon)")
-    st.write("Predictive modules (LIPE) attach here.")
+with tab_help:
+    st.markdown("""
+**How to use**
+1. Choose game (Pick 3 / Pick 4 / Lucky Day).
+2. Paste draws like `439,721,105,...` or upload CSV with a `draw` column.
+3. Adjust strategy switches (NBC / RP / Echo) and memory/weighting.
+4. Click **Run Forecast**. Review confidence, entropy, picks.
+5. Check **Vault / Logs** for audit. Download the run ledger if needed.
 
-def view_about():
-    st.subheader("ℹ️ About")
-    st.write("Crypto Hybrid Live blends RAW + TRUTH + CONFLUENCE for a clean market snapshot.")
-
-# =====================================================
-# Router
-# =====================================================
-with st.sidebar:
-    st.header("Navigate")
-    page=st.radio("",["Dashboard (Crypto)","S&P 500","Forecast","About"],index=0)
-
-if page=="Dashboard (Crypto)":
-    view_crypto_dashboard()
-elif page=="S&P 500":
-    view_sp500()
-elif page=="Forecast":
-    view_forecast()
-else:
-    view_about()
+**Install your latest LIPE logic**
+- Put your real logic inside `LIPE.run_forecast()` in `lipe_core.py`.
+- Keep the return keys: `game, top_picks, alts, confidence, entropy, logic`.
+""")
