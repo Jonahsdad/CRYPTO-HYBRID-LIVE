@@ -1,579 +1,435 @@
-# ==============================
-# HYBRID INTELLIGENCE SYSTEMS
-# Neon UX + Arena Tiles + Free APIs (secure mode, no blockchain)
-# Powered by JESSE RAY LANDINGHAM JR
-# ==============================
+# HYBRID INTELLIGENCE SYSTEMS — Full App (single file)
+# UI + services + helpers. ASCII-safe. Uses free public data by default.
+# Optional paid/live feeds unlock automatically when keys exist in st.secrets.
 
-import os, csv, json, math, random
-from datetime import datetime
-from time import monotonic, sleep
-from typing import Any, Dict, List
+import os, math, time, json
+from dataclasses import dataclass
+from typing import Dict, Any, List, Tuple, Optional
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
 
-# Optional plotting
+# Optional libs (plots & finance). App still runs without them.
+HAS_PLOTLY = True
 try:
     import plotly.express as px
-    HAS_PLOTLY = True
 except Exception:
     HAS_PLOTLY = False
 
-# Optional libs for data
+HAS_YFIN = True
 try:
     import yfinance as yf
 except Exception:
-    yf = None
-try:
-    from bs4 import BeautifulSoup
-except Exception:
-    BeautifulSoup = None
+    HAS_YFIN = False
 
-# -------------------- App chrome --------------------
-st.set_page_config(page_title="Hybrid Intelligence Systems", page_icon="🧠", layout="wide")
+# -----------------------------------------------------------------------------
+# CONFIG / SECRETS
+# -----------------------------------------------------------------------------
+def _s(key: str, default: str = "") -> str:
+    try:
+        return st.secrets.get(key, os.getenv(key, default))
+    except Exception:
+        return os.getenv(key, default)
 
-st.markdown("""
-<style>
-/* Hero */
-.his-hero {
-  background: radial-gradient(1200px 400px at 50% -10%, rgba(255,50,180,.18), rgba(30,144,255,.12), transparent 70%);
-  border:1px solid rgba(255,255,255,.08);
-  box-shadow: inset 0 0 40px rgba(255,255,255,.04), 0 0 30px rgba(30,144,255,.15);
-  border-radius:14px; padding:28px; text-align:center; margin: 8px 0 18px 0;
-}
-.his-title {font-size:38px; font-weight:800; letter-spacing:.5px}
-.his-sub {opacity:.85}
+@dataclass(frozen=True)
+class Settings:
+    odds_api_key: str = _s("ODDS_API_KEY")
+    fred_api_key: str = _s("FRED_API_KEY")
+    eia_api_key: str = _s("EIA_API_KEY")
+    user_agent: str = _s("USER_AGENT", "HIS/1.0 (+https://example.com)")
+    secure_mode: bool = _s("SECURE_MODE", "True").lower() == "true"
 
-/* Tiles */
-.tile {border:1px solid rgba(255,255,255,.10); border-radius:12px;
-       padding:16px; margin-bottom:14px; background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
-       transition: all .15s ease; cursor:pointer;}
-.tile:hover {transform: translateY(-2px); border-color: rgba(30,144,255,.35); box-shadow:0 6px 20px rgba(0,0,0,.25)}
-.tile h4 {margin:0 0 6px 0; font-weight:700}
-.small {font-size:13px; opacity:.85}
-a, a:visited { color:#7dc1ff; text-decoration:none; }
-</style>
-""", unsafe_allow_html=True)
+SETTINGS = Settings()
 
-# -------------------- Session defaults --------------------
-def _init_state():
-    s = st.session_state
-    s.setdefault("page", "home")
-    s.setdefault("ledger", [])
-    s.setdefault("truth_filter", 60)
-    s.setdefault("astro_on", False)
-    s.setdefault("sports_odds", None)
-_init_state()
+# -----------------------------------------------------------------------------
+# HTTP CLIENT (session + retry + caching)
+# -----------------------------------------------------------------------------
+@st.cache_resource
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update({"User-Agent": SETTINGS.user_agent})
+    return s
 
-# -------------------- Resilient, cached HTTP --------------------
-@st.cache_resource(show_spinner=False)
-def _shared_session():
-    sess = requests.Session()
-    sess.headers.update({"User-Agent": "HIS/1.0 (Streamlit)"})
-    return sess
-
-def _call(method, url, *, params=None, json_body=None, headers=None, timeout=12, tries=3):
-    sess = _shared_session()
-    last = None
+def _request(method: str, url: str, *, params=None, json=None, timeout=12, tries=3):
+    sess = _session()
+    last_err = None
     for k in range(tries):
-        t0 = monotonic()
+        t0 = time.perf_counter()
         try:
-            if method == "GET":
-                r = sess.get(url, params=params or {}, headers=headers or {}, timeout=timeout)
-            else:
-                r = sess.post(url, params=params or {}, json=json_body, headers=headers or {}, timeout=timeout)
+            r = sess.request(method, url, params=params, json=json, timeout=timeout)
             r.raise_for_status()
-            ms = int((monotonic() - t0) * 1000)
-            try:
+            ms = int((time.perf_counter() - t0) * 1000)
+            ct = r.headers.get("Content-Type", "")
+            if "json" in ct:
                 return r.json(), ms
-            except Exception:
-                return {"_raw": r.text}, ms
+            return {"_raw": r.text}, ms
         except Exception as e:
-            last = e
-            sleep(0.25 + 0.1*k)
-    raise last
+            last_err = e
+            time.sleep(0.2 * (k + 1))
+    raise last_err
 
-@st.cache_data(ttl=60, show_spinner=False)
-def http_get(url, params=None, headers=None, timeout=12):
-    return _call("GET", url, params=params, headers=headers, timeout=timeout)
+@st.cache_data(ttl=90, show_spinner=False)
+def http_get(url: str, *, params: Optional[Dict[str, Any]] = None):
+    return _request("GET", url, params=params)
 
-def freshness(ms: int|None) -> str:
-    if ms is None: return "n/a"
-    if ms < 300: return f"{ms} ms · fresh"
-    if ms < 1200: return f"{ms} ms"
-    return f"{ms} ms (slow)"
+def freshness(ms: int) -> str:
+    return f"{ms} ms • fresh"
 
-# -------------------- Storage helpers (Lottery history) --------------------
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-os.makedirs(DATA_DIR, exist_ok=True)
-
-def _append_csv(name: str, row: Dict[str, Any]) -> None:
-    path = os.path.join(DATA_DIR, name)
-    exists = os.path.isfile(path)
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=row.keys())
-        if not exists:
-            w.writeheader()
-        w.writerow(row)
-
-def _load_csv(name: str) -> pd.DataFrame:
-    path = os.path.join(DATA_DIR, name)
-    if not os.path.exists(path):
-        return pd.DataFrame()
-    return pd.read_csv(path)
-
-# -------------------- Banner --------------------
+# -----------------------------------------------------------------------------
+# UI COMPONENTS
+# -----------------------------------------------------------------------------
 def hero():
-    st.markdown("""
-<div class="his-hero">
-  <div class="his-sub">Hybrid • Local/Remote</div>
-  <div class="his-title">Hybrid Intelligence Systems</div>
-  <div class="his-sub"><b>Powered by JESSE RAY LANDINGHAM JR</b></div>
+    with st.container():
+        st.markdown(
+            """
+<div style="border-radius:14px;padding:22px 26px;background:linear-gradient(135deg,#0d1b2a 0%,#1b263b 50%,#3a0ca3 100%); box-shadow:0 10px 30px rgba(0,0,0,.35);">
+  <div style="color:#b8c1ec;font-size:13px;letter-spacing:.15em;">Hybrid • Local/Remote</div>
+  <div style="color:#e5e7eb;font-size:36px;font-weight:800;margin-top:2px;">Hybrid Intelligence Systems</div>
+  <div style="color:#eab308;font-weight:700;margin-top:8px;">Powered by JESSE RAY LANDINGHAM JR</div>
 </div>
-""", unsafe_allow_html=True)
+""",
+            unsafe_allow_html=True,
+        )
+        st.write("")
 
-# -------------------- Arena home --------------------
-def arena_home():
-    hero()
-    c1, c2, c3 = st.columns([1,1,1.8])
-    with c1: st.slider("Truth Filter", 0, 100, key="truth_filter")
-    with c2: st.toggle("Enable Astrology Influence", key="astro_on")
-    with c3: st.caption("All data via free public APIs — secure mode (no blockchain)")
+def tiles_home():
+    st.slider("Truth Filter", 0, 100, key="truth_filter", value=60)
+    st.toggle("Enable Astrology Influence", key="astro_on", value=False)
+    st.caption("All data via free public APIs by default — secure mode (no blockchain).")
+    st.write("")
+    cols = st.columns(3)
+    def tile(col, label, desc, page_key):
+        with col:
+            if st.button(label, use_container_width=True):
+                st.session_state.page = page_key
+                st.rerun()
+            st.caption(desc)
 
-    st.markdown("#### Choose your arena")
-    rows = [
-        [("🎰", "Lottery", "Daily numbers, picks, entropy, risk modes"),
-         ("💰", "Crypto", "Live pricing, signals, overlays"),
-         ("📈", "Stocks", "Charts, momentum, factor overlays")],
-        [("🧾", "Options", "Chains, quick IV views"),
-         ("🏡", "Real Estate", "Market tilt and projections"),
-         ("🛢️", "Commodities", "Energy, metals, ag")],
-        [("🏈", "Sports", "Game signals and parlay entropy"),
-         ("🧠", "Human Behavior", "Cohort trends and intent"),
-         ("🌌", "Astrology", "Symbolic overlays (hybrid)")]
-    ]
-    for row in rows:
-        cols = st.columns(3)
-        for i,(icon, name, desc) in enumerate(row):
-            with cols[i]:
-                if st.button(f"{icon}  {name}", use_container_width=True):
-                    st.session_state.page = name.lower().replace(" ","_")
-                    st.rerun()
-                st.markdown(f"<div class='tile'><div class='small'>{desc}</div></div>", unsafe_allow_html=True)
+    tile(cols[0], "🏛 Lottery", "Daily numbers, picks, entropy, risk modes", "lottery")
+    tile(cols[1], "🪙 Crypto", "Live pricing, signals, overlays", "crypto")
+    tile(cols[2], "📈 Stocks", "Charts, momentum, factor overlays", "stocks")
+    cols = st.columns(3)
+    tile(cols[0], "📑 Options", "Chains, quick IV views", "options")
+    tile(cols[1], "🏠 Real Estate", "Market tilt and projections", "real_estate")
+    tile(cols[2], "🛢 Commodities", "Energy, metals", "commodities")
+    cols = st.columns(3)
+    tile(cols[0], "🏈 Sports", "Game signals and parlay entropy", "sports")
+    tile(cols[1], "🧠 Human Behavior", "Cohort trends and intent", "behavior")
+    tile(cols[2], "🛰 Astrology", "Symbolic overlays (hybrid)", "astrology")
 
-# -------------------- Ledger --------------------
-def log_ledger(module: str, payload: Dict[str, Any]):
-    st.session_state.ledger.append({
-        "ts": datetime.utcnow().isoformat(timespec="seconds"),
-        "module": module,
-        **payload
-    })
-
-def ledger_panel():
-    if not st.session_state.ledger:
-        st.caption("Run something to populate the ledger.")
-        return
-    df = pd.DataFrame(st.session_state.ledger)
-    st.download_button("Download Run Ledger (CSV)",
-                       data=df.to_csv(index=False).encode("utf-8"),
-                       file_name="his_run_ledger.csv",
-                       mime="text/csv")
-    with st.expander("View ledger"):
-        st.dataframe(df, use_container_width=True)
-
-# -------------------- Pages --------------------
-# Lottery (Illinois + New York, with CSV history)
-def page_lottery():
-    hero()
-    st.markdown("### 🎰 Lottery")
-
-    c1, c2 = st.columns(2)
-
-    # Illinois Pick-4 via LotteryUSA (scrape)
-    with c1:
-        st.caption("Illinois Pick-4 (latest)")
-        if BeautifulSoup is None:
-            st.info("Install beautifulsoup4 to enable this fetch.")
-            il_draw, il_date = None, ""
-        else:
-            try:
-                html, ms = http_get("https://www.lotteryusa.com/illinois/pick-4/")
-                html = html.get("_raw","") if isinstance(html, dict) else html
-                soup = BeautifulSoup(html, "html.parser")
-                nums = soup.select_one(".c-results-card__numbers")
-                title = soup.select_one(".c-results-card__title")
-                il_draw = nums.get_text(strip=True) if nums else None
-                il_date = title.get_text(strip=True) if title else ""
-                if il_draw:
-                    st.success(f"Illinois Pick-4: {il_draw}  •  {il_date}")
-                    st.caption("LotteryUSA • " + freshness(ms))
-                else:
-                    st.warning("Unavailable (site layout may have changed).")
-            except Exception as e:
-                il_draw, il_date = None, ""
-                st.warning(f"IL fetch failed: {e}")
-        if il_draw:
-            _append_csv("il_pick4.csv", {"timestamp": datetime.utcnow().isoformat(), "draw": il_draw, "draw_date": il_date})
-
-    # New York Take 5 via NY Open Data JSON
-    with c2:
-        st.caption("New York Take 5 (latest)")
-        try:
-            data, ms2 = http_get("https://data.ny.gov/resource/d6yy-54nr.json",
-                                 params={"$limit": 1, "$order": "draw_date DESC"})
-            if isinstance(data, list) and data:
-                row = data[0]
-                ny_draw = row.get("winning_numbers")
-                ny_date = row.get("draw_date","")
-                st.success(f"NY Take 5: {ny_draw}  •  {ny_date}")
-                st.caption("NY Open Data • " + freshness(ms2))
-                if ny_draw:
-                    _append_csv("ny_take5.csv", {"timestamp": datetime.utcnow().isoformat(), "draw": ny_draw, "draw_date": ny_date})
-            else:
-                st.info("No rows returned.")
-        except Exception as e:
-            st.warning(f"NY fetch failed: {e}")
-
-    st.divider()
-    with st.expander("View historical draws"):
-        t1, t2 = st.tabs(["Illinois", "New York"])
-        with t1:
-            st.dataframe(_load_csv("il_pick4.csv"), use_container_width=True)
-        with t2:
-            st.dataframe(_load_csv("ny_take5.csv"), use_container_width=True)
-
-    if st.button("Log to Ledger (Lottery)"):
-        log_ledger("lottery", {"IL": _load_csv("il_pick4.csv").tail(1).to_dict("records"),
-                               "NY": _load_csv("ny_take5.csv").tail(1).to_dict("records")})
-        st.success("Logged to ledger.")
-    st.divider()
-    ledger_panel()
-
-# Crypto
-def page_crypto():
-    hero()
-    st.markdown("### 💰 Crypto")
-    ids = st.text_input("CoinGecko IDs", "bitcoin,ethereum,solana,dogecoin").replace(" ","")
-
-    # CoinGecko markets
-    try:
-        data, ms = http_get("https://api.coingecko.com/api/v3/coins/markets",
-                            params={"vs_currency":"usd","ids":ids,"order":"market_cap_desc","per_page":50,"page":1,"sparkline":"false"})
-        df = pd.DataFrame(data)[["name","symbol","current_price","price_change_percentage_24h","market_cap"]]
-        st.dataframe(df, use_container_width=True)
-        st.caption("CoinGecko • " + freshness(ms))
-    except Exception as e:
-        st.warning(f"CoinGecko error: {e}")
-
-    # Binance 24h (optional)
-    try:
-        raw, ms2 = http_get("https://api.binance.com/api/v3/ticker/24hr")
-        if isinstance(raw, list):
-            wanted = [f"{s.upper()}USDT" for s in [x.strip() for x in ids.split(",") if x.strip()][:5]]
-            bd = pd.DataFrame(raw)
-            sel = bd[bd["symbol"].isin(wanted)][["symbol","lastPrice","priceChangePercent","quoteVolume"]]
-            if not sel.empty:
-                st.write("Binance 24h (spot)")
-                st.dataframe(sel, use_container_width=True)
-                st.caption("Binance • " + freshness(ms2))
-    except Exception:
-        pass
-
-    # Reddit public JSON pulse
-    q = st.text_input("Reddit keyword", "bitcoin")
-    try:
-        posts, ms3 = http_get("https://www.reddit.com/search.json", params={"q": q, "limit": 10, "sort":"new"})
-        if isinstance(posts, dict) and posts.get("data",{}).get("children"):
-            titles = [c["data"]["title"] for c in posts["data"]["children"]]
-            st.write("\n\n".join("• " + t for t in titles[:8]))
-            st.caption("Reddit (public JSON) • " + freshness(ms3))
-    except Exception:
-        pass
-
-    st.divider()
-    ledger_panel()
-
-# Stocks
-def page_stocks():
-    hero()
-    st.markdown("### 📈 Stocks")
-    tickers = st.text_input("Tickers (comma)", "AAPL,MSFT,NVDA")
-    period  = st.selectbox("Period", ["1mo","3mo","6mo","1y","2y"], index=2)
-    interval= st.selectbox("Interval", ["1d","1h","30m"], index=0)
-
-    if yf is None:
-        st.warning("Install yfinance to enable stocks.")
-    else:
-        for t in [x.strip().upper() for x in tickers.split(",") if x.strip()]:
-            try:
-                data = yf.download(t, period=period, interval=interval, progress=False)
-                if data.empty:
-                    st.info(f"No data for {t}."); continue
-                df = data.reset_index()
-                if HAS_PLOTLY:
-                    fig = px.line(df, x="Date", y="Close", title=f"{t} Close — {period}/{interval}", template="plotly_dark")
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.line_chart(df.set_index("Date")["Close"])
-            except Exception as e:
-                st.warning(f"{t} failed: {e}")
-
-    # Yahoo RSS headlines (optional)
-    if BeautifulSoup:
-        try:
-            rss, ms = http_get("https://feeds.finance.yahoo.com/rss/2.0/headline?s=AAPL&region=US&lang=en-US")
-            raw = rss.get("_raw","") if isinstance(rss, dict) else rss
-            if isinstance(raw, str) and "<item>" in raw:
-                soup = BeautifulSoup(raw, "xml")
-                its = soup.select("item")[:5]
-                if its:
-                    st.write("Latest headlines (Yahoo RSS):")
-                    for it in its:
-                        st.markdown(f"- [{it.title.text}]({it.link.text})")
-                    st.caption("Yahoo RSS • " + freshness(ms))
-        except Exception:
-            pass
-
-    st.divider()
-    ledger_panel()
-
-# Options
-def page_options():
-    hero()
-    st.markdown("### 🧾 Options")
-    if yf is None:
-        st.warning("Install yfinance to enable options.")
-        return
-    ticker = st.text_input("Underlying", "AAPL")
-    if st.button("Load Chain", type="primary"):
-        try:
-            tk = yf.Ticker(ticker)
-            exps = tk.options
-            if not exps:
-                st.info("No expirations."); return
-            sel = st.selectbox("Expiration", exps, index=0)
-            oc = tk.option_chain(sel)
-            st.write("Calls"); st.dataframe(oc.calls.head(30), use_container_width=True)
-            st.write("Puts");  st.dataframe(oc.puts.head(30), use_container_width=True)
-            if "impliedVolatility" in oc.calls.columns:
-                ivp = float(oc.calls["impliedVolatility"].dropna().mean())*100
-                st.metric("Avg Call IV (proxy)", f"{ivp:.1f}%")
-        except Exception as e:
-            st.error(f"Chain error: {e}")
-    st.divider()
-    ledger_panel()
-
-# Sports (fixed)
-def page_sports():
-    hero()
-    st.markdown("### 🏈 Sports")
-    c1, c2, c3 = st.columns([1.5,1.2,1.2])
-    with c1: sport_key = st.selectbox("Sport", ["basketball_nba","americanfootball_nfl","baseball_mlb","icehockey_nhl","soccer_epl"], index=0)
-    with c2: market = st.selectbox("Market", ["h2h","spreads","totals"], index=0)
-    with c3: region = st.selectbox("Region", ["us","us2","eu","uk"], index=0)
-
-    a1, a2 = st.columns(2)
-    fetch_btn = a1.button("Fetch Odds", type="primary", use_container_width=True)
-    run_btn   = a2.button("Run Sports Forecast", use_container_width=True)
-
-    if "sports_odds" not in st.session_state:
-        st.session_state.sports_odds = None
-
-    if fetch_btn:
-        key = st.secrets.get("ODDS_API_KEY","")
-        try:
-            if key:
-                url = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds"
-                data, ms = http_get(url, params={"regions":region,"markets":market,"oddsFormat":"american","apiKey":key})
-                rows = []
-                if isinstance(data, list):
-                    for ev in data:
-                        eid = ev.get("id")
-                        for bm in ev.get("bookmakers", []):
-                            for mk in bm.get("markets", []):
-                                if mk.get("key") != market: continue
-                                for out in mk.get("outcomes", []):
-                                    rows.append({"event": eid, "team": out.get("name"), "moneyline": out.get("price", None)})
-                df = pd.DataFrame(rows)
-                if df.empty:
-                    df = pd.DataFrame({"team":["Hawks","Sharks","Tigers","Giants"], "moneyline":[-120,140,-105,155]})
-                    st.info("No live odds; demo shown.")
-                st.session_state.sports_odds = {"df": df, "ms": ms}
-            else:
-                df = pd.DataFrame({"team":["Hawks","Sharks","Tigers","Giants"], "moneyline":[-120,140,-105,155]})
-                st.session_state.sports_odds = {"df": df, "ms": None}
-        except Exception as e:
-            st.error(f"Odds fetch failed: {e}")
-
-    blob = st.session_state.sports_odds
-    if blob and "df" in blob:
-        df = blob["df"].copy()
-        st.subheader("Current Odds")
-        st.dataframe(df, use_container_width=True)
-        if "moneyline" in df.columns:
-            if HAS_PLOTLY:
-                fig = px.bar(df, x="team", y="moneyline", title=f"{sport_key} — {market}", template="plotly_dark")
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.bar_chart(df.set_index("team")["moneyline"])
-        st.caption("Odds • " + freshness(blob["ms"]))
-
-    if run_btn:
-        df = (st.session_state.sports_odds or {}).get("df")
-        if df is None or df.empty:
-            st.info("Fetch odds first."); return
-
-        def prob_from_ml(ml: float) -> float:
-            ml = float(ml)
-            return (100.0/(ml+100.0)) if ml > 0 else (abs(ml)/(abs(ml)+100.0))
-
-        if "moneyline" in df.columns:
-            df_calc = df.copy()
-            df_calc["p"] = df_calc["moneyline"].apply(prob_from_ml)
-            def b_from_ml(ml):
-                ml = float(ml)
-                dec = (ml/100.0 + 1.0) if ml > 0 else (1.0 + 100.0/abs(ml))
-                return max(dec-1.0, 1e-9)
-            df_calc["b"] = df_calc["moneyline"].apply(b_from_ml)
-            def kelly(p,b):
-                q = 1-p; return float(min(max((b*p - q)/b,0.0),1.0))
-            df_calc["kelly"] = df_calc.apply(lambda r: kelly(r["p"], r["b"]), axis=1)
-            best = df_calc.sort_values("kelly", ascending=False).iloc[0]
-            pick = best["team"]; raw_conf = 0.5 + 0.5*float(best["kelly"])
-        else:
-            pick, raw_conf = df.iloc[0].get("team","Team A"), 0.55
-
-        conf = raw_conf
-        if st.session_state.astro_on: conf = 0.5 + (conf - 0.5) * 1.10
-        tf = st.session_state.truth_filter / 100.0
-        conf = 0.5 + (conf - 0.5) * (0.6 + 0.4 * tf)
-
-        st.success(f"Top pick: {pick}")
-        cA, cB, cC = st.columns(3)
-        cA.metric("Confidence", f"{int(conf*100)}%")
-        cB.metric("Market", market.upper())
-        cC.metric("Truth Filter", f"{st.session_state.truth_filter}%")
-
-        log_ledger("sports", {"pick": pick, "conf": float(conf), "sport": sport_key, "market": market, "truth": st.session_state.truth_filter})
-
-    st.divider()
-    ledger_panel()
-
-# Real Estate
-def page_real_estate():
-    hero(); st.markdown("### 🏡 Real Estate")
-    fred_key = st.secrets.get("FRED_API_KEY","")
-    def fred_series(series_id):
-        try:
-            data, ms = http_get("https://api.stlouisfed.org/fred/series/observations",
-                                params={"series_id":series_id,"file_type":"json","api_key":fred_key})
-            if isinstance(data, dict) and "observations" in data:
-                df = pd.DataFrame(data["observations"])[["date","value"]]
-                df["value"] = pd.to_numeric(df["value"], errors="coerce").dropna()
-                return df, ms
-        except Exception:
-            pass
-        return pd.DataFrame(), None
-
-    m30, ms1 = fred_series("MORTGAGE30US")
-    cpi, ms2 = fred_series("CPIAUCSL")
-
-    if not m30.empty:
-        (st.plotly_chart(px.line(m30.tail(240), x="date", y="value", title="30Y Mortgage Rate", template="plotly_dark"), use_container_width=True)
-         if HAS_PLOTLY else st.line_chart(m30.set_index("date")["value"].tail(240)))
-        st.caption("FRED MORTGAGE30US • " + freshness(ms1))
-    if not cpi.empty:
-        (st.plotly_chart(px.line(cpi.tail(240), x="date", y="value", title="CPI (Index)", template="plotly_dark"), use_container_width=True)
-         if HAS_PLOTLY else st.line_chart(cpi.set_index("date")["value"].tail(240)))
-        st.caption("FRED CPIAUCSL • " + freshness(ms2))
-
-    st.divider(); ledger_panel()
-
-# Commodities
-def page_commodities():
-    hero(); st.markdown("### 🛢️ Commodities")
-    eia_key = st.secrets.get("EIA_API_KEY","DEMO_KEY")
-    try:
-        obj, ms = http_get("https://api.eia.gov/series/", params={"api_key": eia_key, "series_id":"PET.RWTC.D"})
-        series = obj.get("series",[{}])[0].get("data", []) if isinstance(obj, dict) else []
-        if series:
-            df = pd.DataFrame(series, columns=["date","price"]).sort_values("date")
-            (st.plotly_chart(px.line(df.tail(365), x="date", y="price", title="WTI Spot (EIA)", template="plotly_dark"), use_container_width=True)
-             if HAS_PLOTLY else st.line_chart(df.set_index("date")["price"].tail(365)))
-            st.caption("EIA PET.RWTC.D • " + freshness(ms))
-    except Exception:
-        st.info("EIA fetch failed.")
-    try:
-        demo, ms2 = http_get("https://metals-api.com/api/latest?base=USD&symbols=XAU,XAG")
-        if isinstance(demo, dict) and "rates" in demo:
-            st.json({"XAU_USD": demo["rates"].get("XAU"), "XAG_USD": demo["rates"].get("XAG")})
-            st.caption("Metals-API demo • " + freshness(ms2))
-    except Exception:
-        pass
-    st.divider(); ledger_panel()
-
-# Human Behavior
-def page_behavior():
-    hero(); st.markdown("### 🧠 Human Behavior")
-    kw = st.text_input("Keyword", "crypto")
-    try:
-        posts, ms = http_get("https://www.reddit.com/search.json", params={"q": kw, "limit": 15, "sort":"new"})
-        if isinstance(posts, dict) and posts.get("data",{}).get("children"):
-            rows = [{"title": c["data"]["title"], "score": c["data"]["score"], "sub": c["data"]["subreddit"]} for c in posts["data"]["children"]]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True)
-            st.caption("Reddit (public JSON) • " + freshness(ms))
-        else:
-            st.info("No results.")
-    except Exception as e:
-        st.warning(f"Reddit fetch failed: {e}")
-    st.divider(); ledger_panel()
-
-# Astrology
-def page_astrology():
-    hero(); st.markdown("### 🌌 Astrology")
-    st.caption("NASA SSD demo + synthetic overlay (free mode)")
-    try:
-        obj, ms = http_get("https://ssd-api.jpl.nasa.gov/sentry.api")
-        if isinstance(obj, dict):
-            st.json({"NASA feed (demo keys)": list(obj.keys())[:3]})
-            st.caption("NASA SSD • " + freshness(ms))
-    except Exception:
-        st.info("NASA endpoint limited. Showing synthetic overlay.")
-    days = st.slider("Days back", 7, 120, 45)
-    xs = list(range(days))
-    deg = [(math.sin(i/5.0) * 57.2958) % 360 for i in xs]
-    df = pd.DataFrame({"d": xs, "degree": deg})
-    (st.plotly_chart(px.line(df, x="d", y="degree", title="Planetary Degree (synthetic demo)", template="plotly_dark"), use_container_width=True)
-     if HAS_PLOTLY else st.line_chart(df.set_index("d")["degree"]))
-    st.divider(); ledger_panel()
-
-# -------------------- Router --------------------
 def back_button():
     if st.button("Back"):
-        st.session_state.page = "home"; st.rerun()
+        st.session_state.page = "home"
+        st.rerun()
 
-p = st.session_state.page
-if p == "home":
-    arena_home()
-elif p == "lottery":
-    back_button(); page_lottery()
-elif p == "crypto":
-    back_button(); page_crypto()
-elif p == "stocks":
-    back_button(); page_stocks()
-elif p == "options":
-    back_button(); page_options()
-elif p == "sports":
-    back_button(); page_sports()
-elif p == "real_estate":
-    back_button(); page_real_estate()
-elif p == "commodities":
-    back_button(); page_commodities()
-elif p == "human_behavior":
-    back_button(); page_behavior()
-elif p == "astrology":
-    back_button(); page_astrology()
+def line_plot(df: pd.DataFrame, x: str, y: str, title: str):
+    if df is None or df.empty:
+        st.info("No data.")
+        return
+    if HAS_PLOTLY:
+        fig = px.line(df, x=x, y=y, title=title, template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.line_chart(df.set_index(x)[y])
+
+# -----------------------------------------------------------------------------
+# SERVICES (in-file)
+# -----------------------------------------------------------------------------
+# CRYPTO — CoinGecko (free)
+def cg_simple(ids: List[str]) -> pd.DataFrame:
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {"vs_currency": "usd", "ids": ",".join(ids), "price_change_percentage": "24h"}
+    data, ms = http_get(url, params=params)
+    rows = []
+    for r in data or []:
+        rows.append({
+            "name": r.get("name"),
+            "symbol": r.get("symbol"),
+            "current_price": r.get("current_price"),
+            "price_change_percentage_24h": r.get("price_change_percentage_24h"),
+            "market_cap": r.get("market_cap"),
+        })
+    st.caption(f"CoinGecko • {freshness(ms)}")
+    return pd.DataFrame(rows)
+
+# STOCKS / OPTIONS — yfinance
+def yf_history(ticker: str, period="6mo", interval="1d") -> pd.DataFrame:
+    if not HAS_YFIN:
+        return pd.DataFrame()
+    df = yf.download(ticker, period=period, interval=interval, progress=False)
+    if df.empty:
+        return df
+    df = df.reset_index().rename(columns={"Date": "date"})
+    df.columns = [c if not isinstance(c, tuple) else c[0] for c in df.columns]
+    return df[["date", "Close"]].dropna()
+
+def yf_options_chain(ticker: str, expiration: Optional[str] = None) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
+    if not HAS_YFIN:
+        return pd.DataFrame(), pd.DataFrame(), []
+    tk = yf.Ticker(ticker)
+    exps = tk.options or []
+    if not exps:
+        return pd.DataFrame(), pd.DataFrame(), []
+    exp = expiration or exps[0]
+    chain = tk.option_chain(exp)
+    return chain.calls, chain.puts, exps
+
+# LOTTERY — NY Open Data + IL CSV (public)
+def ny_take5_latest() -> Dict[str, Any]:
+    url = "https://data.ny.gov/resource/d6yy-54nr.json"
+    data, ms = http_get(url, params={"$limit": 1, "$order": "draw_date DESC"})
+    st.caption(f"NY Open Data • {freshness(ms)}")
+    if isinstance(data, list) and data:
+        r = data[0]
+        return {"draw": r.get("winning_numbers"), "date": r.get("draw_date")}
+    return {"draw": None, "date": ""}
+
+def il_pick4_latest() -> Dict[str, Any]:
+    url = "https://data.illinois.gov/api/views/ck5f-mz5z/rows.csv?accessType=DOWNLOAD"
+    try:
+        df = pd.read_csv(url)
+        row = df.iloc[-1].to_dict()
+        nums = row.get("Winning Numbers") or row.get("winning_numbers")
+        date = row.get("Date") or row.get("draw_date")
+        return {"draw": nums, "date": date}
+    except Exception as e:
+        st.warning(f"IL fetch failed: {e}")
+        return {"draw": None, "date": ""}
+
+# SPORTS — The Odds API (requires key; demo fallback)
+def sports_odds(sport_key: str, market: str, region="us") -> pd.DataFrame:
+    key = SETTINGS.odds_api_key
+    if not key:
+        return pd.DataFrame({"team": ["Hawks", "Sharks", "Tigers", "Giants"],
+                             "moneyline": [-120, 140, -105, 155]})
+    base = "https://api.the-odds-api.com/v4"
+    data, _ = http_get(
+        f"{base}/sports/{sport_key}/odds",
+        params={"regions": region, "markets": market, "oddsFormat": "american", "apiKey": key},
+    )
+    rows = []
+    for ev in (data or []):
+        for bm in ev.get("bookmakers", []):
+            for mk in bm.get("markets", []):
+                if mk.get("key") != market:
+                    continue
+                for out in mk.get("outcomes", []):
+                    rows.append(
+                        {"event": ev.get("id"), "book": bm.get("title"),
+                         "team": out.get("name"), "moneyline": out.get("price")}
+                    )
+    return pd.DataFrame(rows)
+
+# COMMODITIES — EIA (requires free key)
+def eia_wti_latest() -> pd.DataFrame:
+    k = SETTINGS.eia_api_key
+    if not k:
+        return pd.DataFrame()
+    url = f"https://api.eia.gov/series/?api_key={k}&series_id=PET.RWTC.D"
+    data, _ = http_get(url)
+    try:
+        series = data["series"][0]["data"][:180]
+        df = pd.DataFrame(series, columns=["Date", "Price"])
+        df["Date"] = pd.to_datetime(df["Date"])
+        return df.sort_values("Date")
+    except Exception:
+        return pd.DataFrame()
+
+# REAL ESTATE — FRED Mortgage Rate (free key)
+def fred_mortgage30() -> pd.DataFrame:
+    k = SETTINGS.fred_api_key
+    if not k:
+        return pd.DataFrame()
+    url = "https://api.stlouisfed.org/fred/series/observations"
+    params = {"series_id": "MORTGAGE30US", "api_key": k, "file_type": "json"}
+    data, _ = http_get(url, params=params)
+    try:
+        obs = data.get("observations", [])
+        df = pd.DataFrame(obs)[["date", "value"]]
+        df["value"] = pd.to_numeric(df["value"], errors="coerce")
+        df.dropna(inplace=True)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+# ASTROLOGY — synthetic overlay (works offline)
+def synthetic_cosmic_index(days: int = 45) -> pd.DataFrame:
+    xs = list(range(days))
+    deg = [((math.sin(i / 5.0) * 57.2958) % 360) for i in xs]
+    return pd.DataFrame({"day": xs, "degree": deg})
+
+# -----------------------------------------------------------------------------
+# PAGES
+# -----------------------------------------------------------------------------
+def page_home():
+    hero()
+    tiles_home()
+
+def page_crypto():
+    back_button()
+    hero()
+    st.subheader("🪙 Crypto")
+    ids_raw = st.text_input("CoinGecko IDs", "bitcoin,ethereum,solana,dogecoin")
+    ids = [x.strip() for x in ids_raw.split(",") if x.strip()]
+    if st.button("Load Crypto"):
+        df = cg_simple(ids)
+        st.dataframe(df, use_container_width=True)
+
+def page_stocks():
+    back_button()
+    hero()
+    st.subheader("📈 Stocks")
+    tickers = st.text_input("Tickers (comma)", "AAPL,MSFT,NVDA")
+    period = st.selectbox("Period", ["1mo", "3mo", "6mo", "1y", "2y"], index=2)
+    interval = st.selectbox("Interval", ["1d", "1h"], index=0)
+    if st.button("Fetch Stocks"):
+        for t in [x.strip().upper() for x in tickers.split(",") if x.strip()]:
+            df = yf_history(t, period=period, interval=interval)
+            if df.empty:
+                st.warning(f"{t}: no data.")
+                continue
+            line_plot(df, "date", "Close", f"{t} Close")
+
+def page_options():
+    back_button()
+    hero()
+    st.subheader("📑 Options")
+    sym = st.text_input("Underlying", "AAPL")
+    calls, puts, exps = pd.DataFrame(), pd.DataFrame(), []
+    if HAS_YFIN:
+        calls, puts, exps = yf_options_chain(sym)
+    else:
+        st.info("yfinance not installed.")
+    exp = st.selectbox("Expiration", exps) if exps else None
+    if st.button("Load Chain"):
+        if not HAS_YFIN:
+            st.warning("Install yfinance to use Options.")
+            return
+        if exp:
+            calls, puts, _ = yf_options_chain(sym, exp)
+        if not calls.empty:
+            st.caption("Calls")
+            st.dataframe(calls, use_container_width=True, height=320)
+        if not puts.empty:
+            st.caption("Puts")
+            st.dataframe(puts, use_container_width=True, height=320)
+
+def page_sports():
+    back_button()
+    hero()
+    st.subheader("🏈 Sports")
+    sport = st.selectbox("Sport", ["basketball_nba", "americanfootball_nfl", "icehockey_nhl"], index=2)
+    market = st.selectbox("Market", ["spreads", "totals", "h2h"], index=0)
+    region = st.selectbox("Region", ["us", "uk", "eu", "au"], index=0)
+    col1, col2 = st.columns([1,1])
+    with col1:
+        if st.button("Fetch Odds", use_container_width=True):
+            df = sports_odds(sport, market, region)
+            if df.empty:
+                st.warning("No odds (provide an ODDS_API_KEY in secrets).")
+            else:
+                st.dataframe(df, use_container_width=True, height=380)
+    with col2:
+        st.button("Run Sports Forecast", use_container_width=True)
+
+def page_real_estate():
+    back_button()
+    hero()
+    st.subheader("🏠 Real Estate")
+    if st.button("Load Mortgage 30Y (FRED)"):
+        df = fred_mortgage30()
+        if df.empty:
+            st.info("Add FRED_API_KEY in secrets to unlock this feed.")
+        else:
+            line_plot(df, "date", "value", "US 30-Year Mortgage Rate (FRED)")
+
+def page_commodities():
+    back_button()
+    hero()
+    st.subheader("🛢 Commodities")
+    if st.button("Load WTI (EIA)"):
+        df = eia_wti_latest()
+        if df.empty:
+            st.info("Add EIA_API_KEY in secrets to unlock this feed.")
+        else:
+            line_plot(df, "Date", "Price", "WTI Crude Oil (EIA)")
+
+def page_behavior():
+    back_button()
+    hero()
+    st.subheader("🧠 Human Behavior")
+    q = st.text_input("Keyword", "crypto")
+    if st.button("Fetch Mentions"):
+        url = f"https://www.reddit.com/search.json?q={q}&limit=10&sort=new"
+        try:
+            data, ms = http_get(url)
+            titles = [c["data"]["title"] for c in data.get("data", {}).get("children", [])]
+            st.write(titles or "No posts found.")
+            st.caption(f"Reddit (public) • {freshness(ms)}")
+        except Exception as e:
+            st.warning(f"Reddit fetch failed: {e} • Tip: app credentials remove 403 throttling.")
+
+def page_lottery():
+    back_button()
+    hero()
+    st.subheader("🏛 Lottery")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption("Illinois Pick-4 (latest)")
+        il = il_pick4_latest()
+        if il["draw"]:
+            st.success(f"IL: {il['draw']} • {il['date']}")
+        else:
+            st.warning("IL fetch failed. Using open dataset fallback or try later.")
+    with col2:
+        st.caption("New York Take 5 (latest)")
+        ny = ny_take5_latest()
+        if ny["draw"]:
+            st.success(f"NY Take 5: {ny['draw']} • {ny['date']}")
+        else:
+            st.warning("NY fetch failed.")
+
+def page_astrology():
+    back_button()
+    hero()
+    st.subheader("🛰 Astrology")
+    days = st.slider("Days (synthetic)", 7, 120, 45)
+    df = synthetic_cosmic_index(days)
+    line_plot(df, "day", "degree", "Planetary Degree (synthetic demo)")
+    st.caption("Astrology Influence toggle on Home subtly modulates other engines (symbolic).")
+
+# -----------------------------------------------------------------------------
+# ROUTER
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="Hybrid Intelligence Systems", layout="wide")
+
+if "page" not in st.session_state:
+    st.session_state.page = "home"
+
+page = st.session_state.page
+
+if page == "home":
+    page_home()
+elif page == "crypto":
+    page_crypto()
+elif page == "stocks":
+    page_stocks()
+elif page == "options":
+    page_options()
+elif page == "sports":
+    page_sports()
+elif page == "real_estate":
+    page_real_estate()
+elif page == "commodities":
+    page_commodities()
+elif page == "behavior":
+    page_behavior()
+elif page == "lottery":
+    page_lottery()
+elif page == "astrology":
+    page_astrology()
 else:
-    st.session_state.page = "home"; st.rerun()
+    st.session_state.page = "home"
+    st.rerun()
