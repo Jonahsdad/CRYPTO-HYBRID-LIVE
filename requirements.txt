@@ -1,7 +1,11 @@
 streamlit
-pandas
-numpy
-requests
-yfinance
-plotly
+fastapi
+uvicorn
+httpx
+redis
+prometheus-fastapi-instrumentator
+sentry-sdk
 beautifulsoup4
+pandas
+requests
+plotly
