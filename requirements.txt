@@ -2,6 +2,6 @@ streamlit
 pandas
 numpy
 requests
-beautifulsoup4
 yfinance
 plotly
+beautifulsoup4
