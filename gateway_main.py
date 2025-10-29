@@ -1,63 +1,69 @@
-# gateway_main.py
-from fastapi import FastAPI, Request, HTTPException
+# ================================================================
+#  HYBRID INTELLIGENCE SYSTEMS (HIS) GATEWAY
+#  Version: Stable / Live Render Deployment
+#  Author: Jesse Ray Landingham Jr
+# ================================================================
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import os, httpx, time, redis
+import os
 
-app = FastAPI(title="Hybrid Intelligence Gateway", version="1.0")
+# ------------------------------------------------
+# App Initialization
+# ------------------------------------------------
+app = FastAPI(
+    title="HIS Gateway",
+    description="Hybrid Intelligence Systems Gateway — handles requests from LIPE / Streamlit UI.",
+    version="1.0.0"
+)
 
-# === CONFIG ===
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-CACHE_TTL = int(os.getenv("CACHE_TTL_DEFAULT", 60))
-GATEWAY_SECRET = os.getenv("GATEWAY_SECRET", "local_test_key")
-ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
-
+# ------------------------------------------------
+# CORS Setup (allow Streamlit frontend + localhost)
+# ------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=["*"],  # you can tighten this later for security
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# === REDIS CACHE ===
-try:
-    redis_client = redis.from_url(REDIS_URL)
-except Exception:
-    redis_client = None
-
-def cache_get(key):
-    if not redis_client: return None
-    val = redis_client.get(key)
-    return val.decode() if val else None
-
-def cache_set(key, val, ttl=CACHE_TTL):
-    if redis_client:
-        redis_client.setex(key, ttl, val)
-
-# === ROUTES ===
+# ------------------------------------------------
+# Health Check Route
+# ------------------------------------------------
 @app.get("/health")
 async def health():
-    return {"ok": True, "ts": int(time.time()*1000)}
+    """
+    Basic health check for Render and LIPE systems.
+    """
+    return {"status": "ok", "service": "HIS Gateway", "env": os.getenv("RENDER_SERVICE_NAME", "local")}
 
-@app.get("/v1/crypto/quotes")
-async def crypto_quotes(ids: str):
-    key = f"quotes:{ids}"
-    if cache_get(key): 
-        return {"cached": True, "data": cache_get(key)}
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={ids}&vs_currencies=usd"
-    async with httpx.AsyncClient() as client:
-        res = await client.get(url)
-        res.raise_for_status()
-        data = res.text
-        cache_set(key, data)
-        return {"cached": False, "data": data}
+# ------------------------------------------------
+# Root Route
+# ------------------------------------------------
+@app.get("/")
+async def root():
+    """
+    Welcome message and quick link to docs.
+    """
+    return {
+        "message": "Welcome to the HIS Gateway — powered by LIPE.",
+        "status": "running",
+        "docs": "/docs",
+        "service": os.getenv("RENDER_SERVICE_NAME", "local"),
+    }
 
-@app.post("/v1/lipe/forecast")
-async def lipe_forecast(req: Request):
-    body = await req.json()
-    return {"received": body, "forecast": "This is a placeholder forecast."}
+# ------------------------------------------------
+# Example Route (optional, for testing)
+# ------------------------------------------------
+@app.get("/api/test")
+async def test():
+    return {"message": "Gateway test successful!"}
 
-# === ERROR HANDLER ===
-@app.exception_handler(Exception)
-async def on_error(request: Request, exc: Exception):
-    return JSONResponse({"error": str(exc)}, status_code=500)
+# ------------------------------------------------
+# Local Execution (Render uses its own process)
+# ------------------------------------------------
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
