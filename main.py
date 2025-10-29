@@ -1,149 +1,128 @@
-# ================================================================
-#  HYBRID INTELLIGENCE SYSTEMS — CORE DASHBOARD
-#  File: main.py
-#  Author: Jesse Ray Landingham Jr
-#  Version: Stable Render/Streamlit Deployment
-# ================================================================
-
-import streamlit as st
-import requests
+# main.py — Streamlit UI for Hybrid Intelligence Systems (HIS)
 import os
+import time
+import json
 from datetime import datetime
 
-# ------------------------------------------------
-# Environment Setup
-# ------------------------------------------------
+import requests
+import pandas as pd
+import streamlit as st
+
+# ---------- Page Setup ----------
 st.set_page_config(
-    page_title="Hybrid Intelligence Systems — LIPE Core",
-    layout="wide",
-    page_icon="🧠"
+    page_title="Hybrid Intelligence Systems",
+    page_icon="🧠",
+    layout="wide"
 )
 
-# Load environment variables or Streamlit secrets
-GATEWAY_URL = os.getenv("GATEWAY_URL", st.secrets.get("GATEWAY_URL", "http://localhost:8000"))
-HIS_KEY = os.getenv("HIS_KEY", st.secrets.get("HIS_KEY", "demo-key"))
+# ---------- Config / Secrets ----------
+GATEWAY_URL = st.secrets.get("GATEWAY_URL", os.getenv("GATEWAY_URL", ""))
+ENV_NAME    = st.secrets.get("ENV", "dev")
+SERVICE     = st.secrets.get("SERVICE", "CRYPTO-HYBRID-LIVE")
+OWNER       = st.secrets.get("OWNER", "Owner")
 
-# ------------------------------------------------
-# Gateway Communication Layer
-# ------------------------------------------------
-def ping_gateway():
-    """Check the gateway’s /health route."""
+if not GATEWAY_URL:
+    st.error("❌ GATEWAY_URL is missing. Add it in `.streamlit/secrets.toml`.")
+    st.stop()
+
+# ---------- Helpers ----------
+def get_json(url: str, params=None, timeout=10):
     try:
-        res = requests.get(f"{GATEWAY_URL}/health", timeout=10)
-        if res.status_code == 200:
-            return res.json()
-        else:
-            return {"status": "error", "code": res.status_code}
-    except Exception as e:
-        return {"status": "offline", "error": str(e)}
+        r = requests.get(url, params=params or {}, timeout=timeout)
+        r.raise_for_status()
+        return r.json(), None
+    except requests.exceptions.RequestException as e:
+        return None, str(e)
 
-def send_to_gateway(payload: dict):
-    """Forward payload to gateway endpoint."""
-    try:
-        headers = {"x-his-key": HIS_KEY}
-        res = requests.post(f"{GATEWAY_URL}/api/test", json=payload, headers=headers, timeout=10)
-        if res.status_code == 200:
-            return res.json()
-        else:
-            return {"error": f"Gateway returned {res.status_code}"}
-    except Exception as e:
-        return {"error": str(e)}
+def status_badge(ok: bool):
+    return "🟢 OK" if ok else "🔴 DOWN"
 
-# ------------------------------------------------
-# Sidebar Navigation
-# ------------------------------------------------
-st.sidebar.title("🧭 Choose Your Arena")
-section = st.sidebar.radio(
-    "Navigation",
-    [
-        "🏠 Home",
-        "🎰 Lottery",
-        "💰 Crypto",
-        "📈 Stocks",
-        "⚽ Sports",
-        "🏡 Real Estate",
-        "🪙 Commodities",
-        "🧍‍♂️ Human Behavior",
-        "🔮 Astrology"
-    ]
-)
+# ---------- Header ----------
+left, right = st.columns([3, 2])
+with left:
+    st.markdown("### 🧠 Hybrid Intelligence Systems")
+    st.caption(f"Powered by LIPE • Owner: **{OWNER}** • Service: **{SERVICE}** • Env: **{ENV_NAME}**")
+with right:
+    st.code(GATEWAY_URL, language="bash")
 
-# ------------------------------------------------
-# Header
-# ------------------------------------------------
-st.title("🧠 Hybrid Intelligence Systems — Core Engine")
-st.caption("Powered by LIPE · Developed by Jesse Ray Landingham Jr")
-
-# ------------------------------------------------
-# System Status Block
-# ------------------------------------------------
-with st.container():
-    st.subheader("System Status")
-    status = ping_gateway()
-    if status.get("status") == "ok":
-        st.success(f"✅ Gateway Active — {status.get('service', 'Unknown')} ({status.get('env', 'local')})")
-    else:
-        st.error("🚫 Gateway Offline or Unreachable")
-        st.write(status)
-
-    st.write(f"**Gateway URL:** `{GATEWAY_URL}`")
-
-# ------------------------------------------------
-# Quick Start Guide
-# ------------------------------------------------
-with st.expander("🚀 Quick Start"):
-    st.markdown("""
-    - Each page connects through the HIS Gateway (FastAPI backend).
-    - The LIPE engine runs forecasts for lottery, crypto, and market arenas.
-    - The Gateway URL above should match your Render deployment.
-    - Status green = ready for live forecasting.
-    """)
-
-# ------------------------------------------------
-# Core Arena Routing (Examples)
-# ------------------------------------------------
-if section == "🏠 Home":
-    st.header("🏠 Home Arena")
-    st.info("Welcome to Hybrid Intelligence Systems. Use the sidebar to explore different domains.")
-    st.image("https://i.imgur.com/0V9Qh9K.png", use_container_width=True)
-
-elif section == "💰 Crypto":
-    st.header("💰 Crypto Forecasts")
-    st.write("Example call to LIPE gateway:")
-    data = send_to_gateway({"domain": "crypto", "timestamp": datetime.utcnow().isoformat()})
-    st.json(data)
-
-elif section == "🎰 Lottery":
-    st.header("🎰 Lottery Arena")
-    st.write("Draw data and predictions will appear here once LIPE is connected.")
-    st.info("Future integration: Illinois Pick 3 & Pick 4 engine feed.")
-
-elif section == "📈 Stocks":
-    st.header("📈 Stock Market Arena")
-    st.info("Real-time market integration coming soon. Streamlit & FRED API sync.")
-
-elif section == "⚽ Sports":
-    st.header("⚽ Sports Forecast Arena")
-    st.info("Displays performance models and odds analysis.")
-
-elif section == "🏡 Real Estate":
-    st.header("🏡 Real Estate Intelligence")
-    st.info("Dynamic housing metrics and predictive analytics for key markets.")
-
-elif section == "🪙 Commodities":
-    st.header("🪙 Commodities & Metals")
-    st.info("Forecast models for gold, silver, oil, and emerging resources.")
-
-elif section == "🧍‍♂️ Human Behavior":
-    st.header("🧍‍♂️ Human Behavior Mapping")
-    st.info("Behavioral pattern detection and LIPE emotional entropy mapping.")
-
-elif section == "🔮 Astrology":
-    st.header("🔮 Astrological Mapping")
-    st.info("Archetype and planetary correlation layer for human forecasting.")
-
-# ------------------------------------------------
-# Footer
-# ------------------------------------------------
 st.divider()
-st.caption(f"© {datetime.now().year} Hybrid Intelligence Systems — All Rights Reserved.")
+
+# ---------- System Status Card ----------
+st.subheader("System Status")
+
+health_url = f"{GATEWAY_URL}/health"
+health_data, health_err = get_json(health_url, timeout=8)
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Gateway", status_badge(health_err is None))
+with col2:
+    st.metric("Endpoint", "/health")
+with col3:
+    st.metric("Checked", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"))
+
+if health_err:
+    st.error(f"Health check failed: {health_err}")
+else:
+    st.success("Gateway is reachable.")
+    st.json(health_data)
+
+st.divider()
+
+# ---------- Quick Tests ----------
+st.subheader("Quick Test")
+
+with st.form("test_form", clear_on_submit=False):
+    msg = st.text_input("Message to echo via /api/test?msg=", "hello LIPE")
+    submitted = st.form_submit_button("Run Test")
+    if submitted:
+        test_url = f"{GATEWAY_URL}/api/test"
+        data, err = get_json(test_url, params={"msg": msg})
+        if err:
+            st.error(f"/api/test failed: {err}")
+        else:
+            st.success("Test returned:")
+            st.json(data)
+
+st.divider()
+
+# ---------- LIPE Forecast Wire (safe placeholder) ----------
+st.subheader("LIPE Forecast (wire test)")
+st.caption("This calls /v1/lipe/forecast if your Gateway exposes it. If not, we fallback gracefully.")
+
+lipe_params = {
+    "game": st.selectbox("Game", ["pick4", "pick3", "take5", "custom"], index=0),
+    "window": st.selectbox("Window", ["last_30", "last_60", "ytd"], index=0),
+    "mode": st.selectbox("Mode", ["standard", "entropy", "echo"], index=0)
+}
+
+if st.button("Run Forecast"):
+    forecast_url = f"{GATEWAY_URL}/v1/lipe/forecast"
+    data, err = get_json(forecast_url, params=lipe_params, timeout=20)
+    if err:
+        st.warning("Forecast endpoint not available yet on Gateway. Showing placeholder.")
+        st.json({
+            "provider": "lipe-forecast",
+            "requested": lipe_params,
+            "note": "Add /v1/lipe/forecast to the Gateway to activate this panel."
+        })
+    else:
+        st.success("Forecast received.")
+        st.json(data)
+
+st.divider()
+
+# ---------- Diagnostics ----------
+st.subheader("Diagnostics")
+diag = {
+    "time_utc": datetime.utcnow().isoformat(),
+    "gateway_url": GATEWAY_URL,
+    "env": ENV_NAME,
+    "service": SERVICE,
+    "owner": OWNER,
+    "python": os.sys.version.split()[0]
+}
+st.code(json.dumps(diag, indent=2), language="json")
+
+st.caption("Tip: set Streamlit start command on Render to "
+           "`streamlit run main.py --server.port=$PORT --server.address=0.0.0.0`")
