@@ -1,16 +1,15 @@
 # Core UI
 streamlit==1.39.0
 
-# Backend Gateway (FastAPI + Uvicorn)
+# Gateway
 fastapi==0.115.2
 uvicorn==0.32.0
 
-# HTTP Requests
+# HTTP + Data
 httpx==0.27.2
 requests==2.32.3
-
-# Data + Visualization
 pandas==2.2.3
+numpy==1.26.4
 plotly==5.24.1
 beautifulsoup4==4.12.3
 
@@ -19,5 +18,4 @@ redis==5.0.8
 prometheus-fastapi-instrumentator==7.0.0
 sentry-sdk==2.17.0
 
-# Internal Tools
-numpy==1.26.4
+# Optional extras you already use
