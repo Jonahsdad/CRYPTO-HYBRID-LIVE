@@ -1,162 +1,213 @@
 import streamlit as st
 import requests
-import toml
 from datetime import datetime
 
 # =========================
-#   CONFIG
+# Config & Boot
 # =========================
 st.set_page_config(
     page_title="Hybrid Intelligence Systems — Core Engine",
     layout="wide",
-    initial_sidebar_state="expanded",
+    page_icon="🧠",
 )
 
-# Resolve GATEWAY_URL from .streamlit/secrets.toml, Streamlit Cloud secrets, or env
-def get_gateway_url() -> str:
-    # 1) local .streamlit/secrets.toml (Render deploy also mounts this file)
+# Default gateway from secrets; allow override from sidebar
+DEFAULT_GATEWAY = st.secrets.get("GATEWAY_URL", "https://his-gateway.onrender.com")
+
+if "arena" not in st.session_state:
+    st.session_state.arena = "Home"
+
+# =========================
+# Helpers
+# =========================
+def ping(url: str, path: str = "/health", timeout: float = 6.0):
     try:
-        s = toml.load(".streamlit/secrets.toml")
-        if s.get("GATEWAY_URL"):
-            return s["GATEWAY_URL"].rstrip("/")
-    except Exception:
-        pass
-    # 2) Streamlit Cloud/Render env secrets
-    if "GATEWAY_URL" in st.secrets:
-        return str(st.secrets["GATEWAY_URL"]).rstrip("/")
-    # 3) fallback for local dev
-    return "http://localhost:8000"
-
-GATEWAY_URL = get_gateway_url()
-
-ARENAS = [
-    "🏠 Home",
-    "🎲 Lottery",
-    "💰 Crypto",
-    "📈 Stocks",
-    "🏆 Sports",
-    "🏡 Real Estate",
-    "🪙 Commodities",
-    "🧍 Human Behavior",
-    "🔮 Astrology",
-]
-
-# Map UI label -> domain value the gateway expects
-DOMAIN_MAP = {
-    "🏠 Home": "home",
-    "🎲 Lottery": "lottery",
-    "💰 Crypto": "crypto",
-    "📈 Stocks": "stocks",
-    "🏆 Sports": "sports",
-    "🏡 Real Estate": "real_estate",
-    "🪙 Commodities": "commodities",
-    "🧍 Human Behavior": "human",
-    "🔮 Astrology": "astrology",
-}
-
-# =========================
-#   SIDEBAR
-# =========================
-st.sidebar.header("🧠 Choose Your Arena")
-arena = st.sidebar.radio("Navigation", ARENAS, index=0)
-st.sidebar.caption("Each page uses the HIS Gateway for data.")
-
-# =========================
-#   HELPERS
-# =========================
-def safe_get_json(url: str, timeout: int = 10):
-    try:
-        r = requests.get(url, timeout=timeout)
-        ct = r.headers.get("content-type", "")
-        # Some proxies return text; try json either way
-        data = r.json() if "application/json" in ct or r.text.startswith("{") else {"raw": r.text}
-        return r.status_code, data, None
+        r = requests.get(url.rstrip("/") + path, timeout=timeout)
+        ok = r.status_code == 200
+        data = r.json() if ok else {"error": f"HTTP {r.status_code}"}
+        return ok, data
     except Exception as e:
-        return None, None, str(e)
+        return False, {"error": str(e)}
 
-def ping_gateway():
-    return safe_get_json(f"{GATEWAY_URL}/api/test?msg=hello LIPE")
-
-def check_health():
-    return safe_get_json(f"{GATEWAY_URL}/health")
-
-def get_forecast(domain: str):
-    return safe_get_json(f"{GATEWAY_URL}/api/forecast?domain={domain}")
+def arena_card(title: str, emoji: str, subtitle: str, key: str):
+    # Clickable card: sets session_state.arena
+    card_css = """
+    <style>
+      div[data-testid="arena-card"]{
+        border:1px solid rgba(255,255,255,0.08);
+        border-radius:12px;
+        padding:18px 16px;
+        background:rgba(255,255,255,0.02);
+        transition:all .2s ease;
+        height:118px;
+      }
+      div[data-testid="arena-card"]:hover{
+        border-color:rgba(255,255,255,0.22);
+        background:rgba(255,255,255,0.04);
+        cursor:pointer;
+      }
+      .arena-title{font-weight:700;margin:0;}
+      .arena-sub{opacity:.75;font-size:0.85rem;margin-top:4px;}
+    </style>
+    """
+    st.markdown(card_css, unsafe_allow_html=True)
+    clicked = st.button(
+        f"{emoji}  {title}\n\n{subtitle}",
+        key=f"card-{key}",
+        help=subtitle,
+        use_container_width=True,
+    )
+    if clicked:
+        st.session_state.arena = title
 
 # =========================
-#   HEADER
+# Sidebar (Control Panel)
 # =========================
-st.title("🧬 Hybrid Intelligence Systems — Core Engine")
-st.markdown("Powered by LIPE • Developed by **Jesse Ray Landingham Jr**")
+st.sidebar.markdown("### System")
+compute = st.sidebar.radio(
+    "Compute",
+    ["Local (in-app)", "Remote API"],
+    index=1,
+    help="Local = demo stubs. Remote = use the HIS Gateway.",
+)
+
+gateway_url = st.sidebar.text_input(
+    "API URL (Remote)",
+    value=DEFAULT_GATEWAY,
+    help="Your HIS Gateway base URL.",
+)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Truth Filter")
+truth_filter = st.sidebar.slider(
+    "Signal Strictness",
+    min_value=0,
+    max_value=100,
+    value=55,
+    help="Higher = stricter signals (fewer, higher confidence).",
+)
+
+st.sidebar.caption("Controls for each module appear on its page.")
 
 # =========================
-#   STATUS PANEL
+# Header
 # =========================
-col1, col2, col3 = st.columns([1.2, 1, 1], vertical_alignment="center")
+st.markdown(
+    """
+    <div style="padding:8px 0 2px 0;">
+      <h1 style="margin-bottom:4px;">🧬 Hybrid Intelligence Systems — Core Engine</h1>
+      <div style="opacity:.75;">Powered by LIPE · Developed by Jesse Ray Landingham Jr</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-with col1:
-    st.caption("System Status")
-    hc_status, hc_data, hc_err = check_health()
-    if hc_status == 200 and hc_data and hc_data.get("status") == "ok":
-        st.success("🟢 Gateway Online")
-    elif hc_err:
-        st.error("🔴 Gateway Offline or Unreachable")
-        st.code(hc_err, language="text")
+# =========================
+# System Status + Actions
+# =========================
+cols = st.columns([1.2, 1.2, 1])
+with cols[0]:
+    if compute.startswith("Remote"):
+        ok, data = ping(gateway_url)
+        if ok:
+            st.success("🟢 Gateway Online")
+            st.json(data)
+        else:
+            st.error("🔴 Gateway Offline or Unreachable")
+            st.json(data)
     else:
-        st.error(f"🔴 Gateway problem (HTTP {hc_status})")
-        if hc_data:
-            st.json(hc_data)
+        st.info("🟡 Local demo mode (no external calls).")
 
-with col2:
-    st.caption("Gateway URL")
-    st.code(GATEWAY_URL, language="text")
+with cols[1]:
+    st.text_input("Gateway URL", gateway_url, disabled=True)
 
-with col3:
-    st.caption("Checked")
-    st.code(datetime.utcnow().isoformat(timespec="seconds") + "Z", language="text")
+with cols[2]:
+    st.text_input("Checked", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"), disabled=True)
 
-# =========================
-#   ACTION BAR (on the panel)
-# =========================
 st.markdown("### ⚡ Actions")
+ac1, ac2, ac3 = st.columns([1, 1, 1])
 
-ab1, ab2 = st.columns([1, 1], vertical_alignment="center")
-
-with ab1:
-    if st.button("📡 Ping Gateway", use_container_width=True):
-        st.write("**Ping Result**")
-        code, data, err = ping_gateway()
-        if err:
-            st.error(err)
+with ac1:
+    if st.button("🛰️  Ping Gateway", use_container_width=True):
+        if compute.startswith("Remote"):
+            ok, data = ping(gateway_url)
+            st.toast("Gateway OK" if ok else "Gateway error", icon="✅" if ok else "❌")
         else:
-            st.write(f"HTTP {code}")
-            st.json(data)
+            st.toast("Local mode — no ping", icon="ℹ️")
 
-with ab2:
-    domain = DOMAIN_MAP[arena]
-    if st.button(f"🎯 Get Forecast for {arena}", use_container_width=True):
-        st.write(f"**Forecast: {arena}**")
-        code, data, err = get_forecast(domain)
-        if err:
-            st.error(err)
-        else:
-            st.write(f"HTTP {code}")
-            st.json(data)
+with ac2:
+    if st.button(f"🔮  Get Forecast for {st.session_state.arena}", use_container_width=True):
+        st.toast(f"Requested forecast for {st.session_state.arena}", icon="🧠")
+
+with ac3:
+    if st.button("🧷 Copy API URL", use_container_width=True):
+        st.session_state["_copy"] = gateway_url
+        st.toast("Copied (stored in session)", icon="📋")
 
 st.divider()
 
 # =========================
-#   HOME ARENA
+# Choose your arena (GRID)
 # =========================
-if arena == "🏠 Home":
-    st.subheader("🏠 Home Arena")
-    st.write("Welcome to Hybrid Intelligence Systems. Use the sidebar to explore different domains.")
-    # That old Imgur URL is dead; show a simple placeholder instead:
-    st.image(
-        "https://placehold.co/1200x400?text=HIS%20Core%20Engine%20%F0%9F%94%A5",
-        caption="HIS Core Engine powered by LIPE — Tier 33 Intelligence Layer.",
-        use_column_width=True,
-    )
+st.markdown("## Choose your arena")
 
-# (Other arenas can add their own UI blocks later; the forecast button already works.)
-st.caption("© 2025 Jesse Ray Landingham Jr — All Rights Reserved.")
+# 9 cards → 3 rows x 3 cols
+grid = [
+    [
+        ("Lottery", "🎲", "Daily numbers, picks, entropy, risk modes", "lottery"),
+        ("Crypto", "💰", "Live pricing, signals, overlays", "crypto"),
+        ("Stocks", "📈", "Charts, momentum, factor overlays", "stocks"),
+    ],
+    [
+        ("Options", "🗂️", "Chains, skew & IV views", "options"),
+        ("Real Estate", "🏡", "Market tilt & projections", "re"),
+        ("Commodities", "🪙", "Energy, metals, ag", "commod"),
+    ],
+    [
+        ("Sports", "🏆", "Game signals and parlay edges", "sports"),
+        ("Human Behavior", "🧍", "Cognitive & sentiment lenses", "human"),
+        ("Astrology", "🔮", "Playful probabilistic lens", "astro"),
+    ],
+]
+
+for row in grid:
+    c1, c2, c3 = st.columns(3)
+    for c, (title, emoji, sub, key) in zip([c1, c2, c3], row):
+        with c:
+            arena_card(title, emoji, sub, key)
+
+st.divider()
+
+# =========================
+# Arena content panel
+# =========================
+st.markdown(f"### 🏟️ {st.session_state.arena} Arena")
+
+if st.session_state.arena == "Home":
+    st.write("Welcome to Hybrid Intelligence Systems. Use the grid above to open an arena.")
+else:
+    # Placeholder controls per arena (you can expand these later)
+    left, right = st.columns([1.2, 1])
+    with left:
+        st.markdown("**Controls**")
+        st.selectbox("Horizon", ["Intraday", "Daily", "Weekly", "Monthly"])
+        st.slider("Confidence floor", 0, 100, 60)
+        st.checkbox("Use NBC strategy", value=True)
+        st.checkbox("Echo alignment (FES)", value=True)
+        if st.button("Run Forecast", type="primary"):
+            if compute.startswith("Remote"):
+                st.success(f"Queued forecast via {gateway_url} for **{st.session_state.arena}**")
+            else:
+                st.info("Local mode: returning demo output.")
+            st.code(
+                "{'forecast':'demo-output','entropy':0.37,'confidence':0.74,'tier':'T33','arena':'"
+                + st.session_state.arena + "'}",
+                language="json",
+            )
+    with right:
+        st.markdown("**Notes**")
+        st.write(f"- Truth Filter: **{truth_filter}%**")
+        st.write("- Toggle *Remote API* in the left panel to use the live Gateway.")
+        st.write("- Actions appear above; this panel will grow with arena-specific tools.")
+
+st.caption("© 2025 Jesse Ray Landingham Jr · LIPE / HIS · All Rights Reserved")
