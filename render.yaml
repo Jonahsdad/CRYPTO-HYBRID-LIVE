@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: his-gateway
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn gateway_main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: HIS_KEY
+        value: your-strong-key
+      - key: SENTRY_DSN
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: his-redis
+          type: redis
+
+  - type: web
+    name: his-core-ui
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
+    envVars:
+      - key: STREAMLIT_ENV
+        value: production
+    autoDeploy: true
+
+databases: []
+
+# Optional Redis (Key-Value) if you enable caching/rate-limit
+keyValueStores:
+  - name: his-redis
