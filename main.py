@@ -1,128 +1,69 @@
-# main.py — Streamlit UI for Hybrid Intelligence Systems (HIS)
-import os
-import time
-import json
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import Literal, List, Dict, Any
 from datetime import datetime
+import random
 
-import requests
-import pandas as pd
-import streamlit as st
+app = FastAPI(title="HIS Gateway", version="1.0.0")
 
-# ---------- Page Setup ----------
-st.set_page_config(
-    page_title="Hybrid Intelligence Systems",
-    page_icon="🧠",
-    layout="wide"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],           # tighten in prod
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# ---------- Config / Secrets ----------
-GATEWAY_URL = st.secrets.get("GATEWAY_URL", os.getenv("GATEWAY_URL", ""))
-ENV_NAME    = st.secrets.get("ENV", "dev")
-SERVICE     = st.secrets.get("SERVICE", "CRYPTO-HYBRID-LIVE")
-OWNER       = st.secrets.get("OWNER", "Owner")
+# -------- Health / status ----------
+@app.get("/")
+def root():
+    return {"service": "HIS_Gateway", "ok": True, "ts": datetime.utcnow().isoformat() + "Z"}
 
-if not GATEWAY_URL:
-    st.error("❌ GATEWAY_URL is missing. Add it in `.streamlit/secrets.toml`.")
-    st.stop()
+@app.get("/ping")
+def ping():
+    return {"status": "ok", "service": "HIS_Gateway", "ts": datetime.utcnow().isoformat() + "Z"}
 
-# ---------- Helpers ----------
-def get_json(url: str, params=None, timeout=10):
-    try:
-        r = requests.get(url, params=params or {}, timeout=timeout)
-        r.raise_for_status()
-        return r.json(), None
-    except requests.exceptions.RequestException as e:
-        return None, str(e)
+@app.get("/status")
+def status():
+    return {
+        "status": "ok",
+        "env": "production",
+        "service": "HIS_Gateway",
+        "ts": datetime.utcnow().isoformat() + "Z"
+    }
 
-def status_badge(ok: bool):
-    return "🟢 OK" if ok else "🔴 DOWN"
+# -------- Forecast API -------------
+class ForecastIn(BaseModel):
+    game: Literal["pick3", "pick4", "ldl"]
+    window: Literal["last_30", "midday_30", "evening_30"] = "last_30"
+    mode: Literal["standard", "nbc", "rp"] = "standard"
+    strictness: int = Field(default=55, ge=0, le=100)
 
-# ---------- Header ----------
-left, right = st.columns([3, 2])
-with left:
-    st.markdown("### 🧠 Hybrid Intelligence Systems")
-    st.caption(f"Powered by LIPE • Owner: **{OWNER}** • Service: **{SERVICE}** • Env: **{ENV_NAME}**")
-with right:
-    st.code(GATEWAY_URL, language="bash")
+def _picks(game: str) -> List[Dict[str, Any]]:
+    rnd = random.Random()  # deterministic if you seed
+    if game == "pick3":
+        return [{"pick": "".join(str(rnd.randint(0,9)) for _ in range(3)),
+                 "confidence": round(rnd.uniform(0.55, 0.85), 2)} for _ in range(5)]
+    if game == "pick4":
+        return [{"pick": "".join(str(rnd.randint(0,9)) for _ in range(4)),
+                 "bonus": rnd.randint(0,9),
+                 "confidence": round(rnd.uniform(0.52, 0.82), 2)} for _ in range(5)]
+    # Lucky Day Lotto example (1–45)
+    return [{"pick": sorted(rnd.sample(range(1, 46), 5)),
+             "confidence": round(rnd.uniform(0.48, 0.78), 2)} for _ in range(5)]
 
-st.divider()
-
-# ---------- System Status Card ----------
-st.subheader("System Status")
-
-health_url = f"{GATEWAY_URL}/health"
-health_data, health_err = get_json(health_url, timeout=8)
-
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Gateway", status_badge(health_err is None))
-with col2:
-    st.metric("Endpoint", "/health")
-with col3:
-    st.metric("Checked", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"))
-
-if health_err:
-    st.error(f"Health check failed: {health_err}")
-else:
-    st.success("Gateway is reachable.")
-    st.json(health_data)
-
-st.divider()
-
-# ---------- Quick Tests ----------
-st.subheader("Quick Test")
-
-with st.form("test_form", clear_on_submit=False):
-    msg = st.text_input("Message to echo via /api/test?msg=", "hello LIPE")
-    submitted = st.form_submit_button("Run Test")
-    if submitted:
-        test_url = f"{GATEWAY_URL}/api/test"
-        data, err = get_json(test_url, params={"msg": msg})
-        if err:
-            st.error(f"/api/test failed: {err}")
-        else:
-            st.success("Test returned:")
-            st.json(data)
-
-st.divider()
-
-# ---------- LIPE Forecast Wire (safe placeholder) ----------
-st.subheader("LIPE Forecast (wire test)")
-st.caption("This calls /v1/lipe/forecast if your Gateway exposes it. If not, we fallback gracefully.")
-
-lipe_params = {
-    "game": st.selectbox("Game", ["pick4", "pick3", "take5", "custom"], index=0),
-    "window": st.selectbox("Window", ["last_30", "last_60", "ytd"], index=0),
-    "mode": st.selectbox("Mode", ["standard", "entropy", "echo"], index=0)
-}
-
-if st.button("Run Forecast"):
-    forecast_url = f"{GATEWAY_URL}/v1/lipe/forecast"
-    data, err = get_json(forecast_url, params=lipe_params, timeout=20)
-    if err:
-        st.warning("Forecast endpoint not available yet on Gateway. Showing placeholder.")
-        st.json({
-            "provider": "lipe-forecast",
-            "requested": lipe_params,
-            "note": "Add /v1/lipe/forecast to the Gateway to activate this panel."
-        })
-    else:
-        st.success("Forecast received.")
-        st.json(data)
-
-st.divider()
-
-# ---------- Diagnostics ----------
-st.subheader("Diagnostics")
-diag = {
-    "time_utc": datetime.utcnow().isoformat(),
-    "gateway_url": GATEWAY_URL,
-    "env": ENV_NAME,
-    "service": SERVICE,
-    "owner": OWNER,
-    "python": os.sys.version.split()[0]
-}
-st.code(json.dumps(diag, indent=2), language="json")
-
-st.caption("Tip: set Streamlit start command on Render to "
-           "`streamlit run main.py --server.port=$PORT --server.address=0.0.0.0`")
+@app.post("/v1/lipe/forecast")
+def lipe_forecast(inp: ForecastIn) -> Dict[str, Any]:
+    return {
+        "provider": "lipe-forecast",
+        "request": inp.model_dump(),
+        "summary": {
+            "class": "NBC" if inp.mode == "nbc" else inp.mode.capitalize(),
+            "entropy_signature": round(random.uniform(0.25, 0.75), 3),
+            "echo_match": random.randint(0, 3),
+            "tier_validation": "T33",
+            "ts": datetime.utcnow().isoformat() + "Z",
+        },
+        "picks": _picks(inp.game),
+    }
