@@ -1,213 +1,223 @@
-import streamlit as st
-import requests
+# app.py
+import os
+import json
+import time
 from datetime import datetime
+from typing import Tuple, Dict, Any, Optional
 
-# =========================
-# Config & Boot
-# =========================
+import requests
+import streamlit as st
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Page / Theme
+# ────────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Hybrid Intelligence Systems — Core Engine",
+    page_icon="🧬",
     layout="wide",
-    page_icon="🧠",
 )
 
-# Default gateway from secrets; allow override from sidebar
-DEFAULT_GATEWAY = st.secrets.get("GATEWAY_URL", "https://his-gateway.onrender.com")
-
-if "arena" not in st.session_state:
-    st.session_state.arena = "Home"
-
-# =========================
-# Helpers
-# =========================
-def ping(url: str, path: str = "/health", timeout: float = 6.0):
-    try:
-        r = requests.get(url.rstrip("/") + path, timeout=timeout)
-        ok = r.status_code == 200
-        data = r.json() if ok else {"error": f"HTTP {r.status_code}"}
-        return ok, data
-    except Exception as e:
-        return False, {"error": str(e)}
-
-def arena_card(title: str, emoji: str, subtitle: str, key: str):
-    # Clickable card: sets session_state.arena
-    card_css = """
-    <style>
-      div[data-testid="arena-card"]{
-        border:1px solid rgba(255,255,255,0.08);
-        border-radius:12px;
-        padding:18px 16px;
-        background:rgba(255,255,255,0.02);
-        transition:all .2s ease;
-        height:118px;
-      }
-      div[data-testid="arena-card"]:hover{
-        border-color:rgba(255,255,255,0.22);
-        background:rgba(255,255,255,0.04);
-        cursor:pointer;
-      }
-      .arena-title{font-weight:700;margin:0;}
-      .arena-sub{opacity:.75;font-size:0.85rem;margin-top:4px;}
-    </style>
-    """
-    st.markdown(card_css, unsafe_allow_html=True)
-    clicked = st.button(
-        f"{emoji}  {title}\n\n{subtitle}",
-        key=f"card-{key}",
-        help=subtitle,
-        use_container_width=True,
-    )
-    if clicked:
-        st.session_state.arena = title
-
-# =========================
-# Sidebar (Control Panel)
-# =========================
-st.sidebar.markdown("### System")
-compute = st.sidebar.radio(
-    "Compute",
-    ["Local (in-app)", "Remote API"],
-    index=1,
-    help="Local = demo stubs. Remote = use the HIS Gateway.",
-)
-
-gateway_url = st.sidebar.text_input(
-    "API URL (Remote)",
-    value=DEFAULT_GATEWAY,
-    help="Your HIS Gateway base URL.",
-)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Truth Filter")
-truth_filter = st.sidebar.slider(
-    "Signal Strictness",
-    min_value=0,
-    max_value=100,
-    value=55,
-    help="Higher = stricter signals (fewer, higher confidence).",
-)
-
-st.sidebar.caption("Controls for each module appear on its page.")
-
-# =========================
-# Header
-# =========================
+# Minimal dark-friendly tweaks (optional)
 st.markdown(
     """
-    <div style="padding:8px 0 2px 0;">
-      <h1 style="margin-bottom:4px;">🧬 Hybrid Intelligence Systems — Core Engine</h1>
-      <div style="opacity:.75;">Powered by LIPE · Developed by Jesse Ray Landingham Jr</div>
-    </div>
+    <style>
+    .metric-ok {background: #1b4332; color:#d8f3dc; padding:6px 10px; border-radius:8px; font-weight:600;}
+    .pill      {background: #111827; padding:6px 10px; border-radius:999px; border:1px solid #374151;}
+    .muted     {opacity: .75;}
+    .jsonbox   {background:#0b1220; border:1px solid #1f2937; border-radius:8px; padding:12px;}
+    .arena-btn {width:100%; text-align:left;}
+    </style>
     """,
     unsafe_allow_html=True,
 )
 
-# =========================
-# System Status + Actions
-# =========================
-cols = st.columns([1.2, 1.2, 1])
-with cols[0]:
-    if compute.startswith("Remote"):
-        ok, data = ping(gateway_url)
+# ────────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ────────────────────────────────────────────────────────────────────────────────
+GATEWAY_URL_DEFAULT = os.getenv("HIS_GATEWAY_URL", "https://his-gateway.onrender.com")
+
+def _safe_get(url: str, timeout: int = 15) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+    try:
+        r = requests.get(url, timeout=timeout)
+        ok = r.ok
+        try:
+            data = r.json()
+        except Exception:
+            data = {"raw": r.text}
+        return ok, data, ""
+    except Exception as e:
+        return False, None, str(e)
+
+def ping_gateway(base: str) -> Dict[str, Any]:
+    url = base.rstrip("/") + "/ping"
+    ok, data, err = _safe_get(url)
+    if not ok:
+        return {"status": "error", "error": err or data}
+    return {"status": "ok", "data": data}
+
+def gateway_status(base: str) -> Dict[str, Any]:
+    # If your gateway has a /status route, use it; otherwise fall back to /ping
+    for path in ("/status", "/ping"):
+        ok, data, err = _safe_get(base.rstrip("/") + path)
         if ok:
-            st.success("🟢 Gateway Online")
-            st.json(data)
-        else:
-            st.error("🔴 Gateway Offline or Unreachable")
-            st.json(data)
-    else:
-        st.info("🟡 Local demo mode (no external calls).")
+            return {"status": "ok", "service": "HIS_Gateway", "env": "production", "ts": datetime.utcnow().isoformat()+"Z", "data": data}
+    return {"status": "error", "service": "HIS_Gateway", "error": err or "Status route not reachable"}
 
-with cols[1]:
-    st.text_input("Gateway URL", gateway_url, disabled=True)
+def run_home_forecast(base: str, strictness: int) -> Dict[str, Any]:
+    # Adjust to your real endpoint (POST/GET) as needed
+    url = base.rstrip("/") + f"/forecast/home?strictness={strictness}"
+    ok, data, err = _safe_get(url)
+    if not ok:
+        return {"status": "error", "error": err or data}
+    return {"status": "ok", "result": data}
 
-with cols[2]:
-    st.text_input("Checked", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"), disabled=True)
+def status_pill(ok: bool) -> str:
+    if ok:
+        return '<span class="metric-ok">● Gateway Online</span>'
+    return '<span class="pill">○ Gateway Offline</span>'
 
-st.markdown("### ⚡ Actions")
-ac1, ac2, ac3 = st.columns([1, 1, 1])
+# ────────────────────────────────────────────────────────────────────────────────
+# Sidebar (System • Truth Filter • Actions)  ←——  FULL FIX: Actions moved here
+# ────────────────────────────────────────────────────────────────────────────────
+with st.sidebar:
+    st.caption("System")
+    compute = st.radio(
+        "Compute",
+        options=["Local (in-app)", "Remote API"],
+        index=1,
+    )
 
-with ac1:
-    if st.button("🛰️  Ping Gateway", use_container_width=True):
-        if compute.startswith("Remote"):
-            ok, data = ping(gateway_url)
-            st.toast("Gateway OK" if ok else "Gateway error", icon="✅" if ok else "❌")
-        else:
-            st.toast("Local mode — no ping", icon="ℹ️")
+    api_url = st.text_input(
+        "API URL (Remote)",
+        value=st.session_state.get("api_url", GATEWAY_URL_DEFAULT),
+        help="Your gateway base URL.",
+    )
+    st.session_state["api_url"] = api_url
 
-with ac2:
-    if st.button(f"🔮  Get Forecast for {st.session_state.arena}", use_container_width=True):
-        st.toast(f"Requested forecast for {st.session_state.arena}", icon="🧠")
+    st.divider()
 
-with ac3:
-    if st.button("🧷 Copy API URL", use_container_width=True):
-        st.session_state["_copy"] = gateway_url
-        st.toast("Copied (stored in session)", icon="📋")
+    st.caption("Truth Filter")
+    signal_strictness = st.slider(
+        "Signal Strictness",
+        min_value=0, max_value=100, value=55,
+        help="Controls which module controls appear on this page."
+    )
 
-st.divider()
+    st.divider()
 
-# =========================
-# Choose your arena (GRID)
-# =========================
+    # ── Actions now live in the sidebar
+    with st.expander("⚙️ Actions", expanded=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("⚡ Ping Gateway", use_container_width=True):
+                with st.spinner("Pinging gateway…"):
+                    res = ping_gateway(api_url)
+                if res.get("status") == "ok":
+                    st.toast("Gateway responded ✅", icon="✅")
+                    st.json(res.get("data"))
+                else:
+                    st.error(f"Ping failed: {res.get('error')}")
+
+        with c2:
+            if st.button("🔮 Get Forecast for Home", use_container_width=True):
+                with st.spinner("Running forecast…"):
+                    res = run_home_forecast(api_url, signal_strictness)
+                if res.get("status") == "ok":
+                    st.toast("Forecast complete ✅", icon="🎯")
+                    st.json(res.get("result"))
+                else:
+                    st.error(f"Forecast failed: {res.get('error')}")
+
+        # Best cross-platform “copy” is Streamlit's built-in copy icon on code blocks
+        st.caption("API URL")
+        st.code(api_url, language="text")  # shows a copy button automatically
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Main Header
+# ────────────────────────────────────────────────────────────────────────────────
+st.markdown("# 🧬 Hybrid Intelligence Systems — Core Engine")
+st.markdown("_Powered by LIPE — Developed by Jesse Ray Landingham Jr_")
+
+# Gateway tiles
+status = gateway_status(api_url)
+is_online = status.get("status") == "ok"
+
+left, mid, right = st.columns([1.2, 1, 1])
+with left:
+    st.markdown(status_pill(is_online), unsafe_allow_html=True)
+with mid:
+    st.markdown(
+        f"""
+        **Gateway URL**  
+        <span class="pill">{api_url}</span>
+        """,
+        unsafe_allow_html=True,
+    )
+with right:
+    st.markdown(
+        f"""
+        **Checked**  
+        <span class="pill">{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%SZ')}</span>
+        """,
+        unsafe_allow_html=True,
+    )
+
+# Status JSON
+st.markdown(" ")
+st.markdown("**Status**")
+st.markdown('<div class="jsonbox">', unsafe_allow_html=True)
+st.code(json.dumps(
+    {
+        "status": status.get("status"),
+        "service": status.get("service", "HIS_Gateway"),
+        "env": status.get("env", "production"),
+        "ts": status.get("ts", datetime.utcnow().isoformat()+"Z"),
+        "data": status.get("data"),
+        "error": status.get("error"),
+    },
+    indent=2,
+), language="json")
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Choose your arena
+# ────────────────────────────────────────────────────────────────────────────────
 st.markdown("## Choose your arena")
 
-# 9 cards → 3 rows x 3 cols
-grid = [
-    [
-        ("Lottery", "🎲", "Daily numbers, picks, entropy, risk modes", "lottery"),
-        ("Crypto", "💰", "Live pricing, signals, overlays", "crypto"),
-        ("Stocks", "📈", "Charts, momentum, factor overlays", "stocks"),
-    ],
-    [
-        ("Options", "🗂️", "Chains, skew & IV views", "options"),
-        ("Real Estate", "🏡", "Market tilt & projections", "re"),
-        ("Commodities", "🪙", "Energy, metals, ag", "commod"),
-    ],
-    [
-        ("Sports", "🏆", "Game signals and parlay edges", "sports"),
-        ("Human Behavior", "🧍", "Cognitive & sentiment lenses", "human"),
-        ("Astrology", "🔮", "Playful probabilistic lens", "astro"),
-    ],
+arenas = [
+    ("🎰 Lottery", "Daily numbers, picks, entropy, risk modes"),
+    ("💰 Crypto", "Live pricing, signals, overlays"),
+    ("📈 Stocks", "Charts, momentum, factor overlays"),
+    ("🧮 Options", "Chains, skew & IV views"),
+    ("🏠 Real Estate", "Market tilt & projections"),
+    ("🪙 Commodities", "Energy, metals, ag"),
+    ("🏆 Sports", "Game signals and parlay edges"),
+    ("🧠 Human Behavior", "Cognitive & sentiment lenses"),
+    ("🔮 Astrology", "Playful probabilistic lens"),
 ]
 
-for row in grid:
-    c1, c2, c3 = st.columns(3)
-    for c, (title, emoji, sub, key) in zip([c1, c2, c3], row):
-        with c:
-            arena_card(title, emoji, sub, key)
+rows = [arenas[i:i+3] for i in range(0, len(arenas), 3)]
+for row in rows:
+    cols = st.columns(3)
+    for (label, blurb), col in zip(row, cols):
+        with col:
+            if st.button(label, key=f"arena_{label}", use_container_width=True):
+                st.session_state["arena"] = label
+            st.caption(blurb)
 
-st.divider()
+# ────────────────────────────────────────────────────────────────────────────────
+# Home Arena (contextual content)
+# ────────────────────────────────────────────────────────────────────────────────
+st.markdown("## Home Arena")
+selected = st.session_state.get("arena", "🎰 Lottery")
+st.write(f"Selected: **{selected}**")
 
-# =========================
-# Arena content panel
-# =========================
-st.markdown(f"### 🏟️ {st.session_state.arena} Arena")
+# Example contextual content (swap with your real module loaders)
+if selected == "🎰 Lottery":
+    st.info("Lottery module: plug in your pick engines, entropy views, and RP overlays here.")
+elif selected == "💰 Crypto":
+    st.info("Crypto module: live pricing, signals, narrative overlays.")
+# … extend for other arenas as you wire them.
 
-if st.session_state.arena == "Home":
-    st.write("Welcome to Hybrid Intelligence Systems. Use the grid above to open an arena.")
-else:
-    # Placeholder controls per arena (you can expand these later)
-    left, right = st.columns([1.2, 1])
-    with left:
-        st.markdown("**Controls**")
-        st.selectbox("Horizon", ["Intraday", "Daily", "Weekly", "Monthly"])
-        st.slider("Confidence floor", 0, 100, 60)
-        st.checkbox("Use NBC strategy", value=True)
-        st.checkbox("Echo alignment (FES)", value=True)
-        if st.button("Run Forecast", type="primary"):
-            if compute.startswith("Remote"):
-                st.success(f"Queued forecast via {gateway_url} for **{st.session_state.arena}**")
-            else:
-                st.info("Local mode: returning demo output.")
-            st.code(
-                "{'forecast':'demo-output','entropy':0.37,'confidence':0.74,'tier':'T33','arena':'"
-                + st.session_state.arena + "'}",
-                language="json",
-            )
-    with right:
-        st.markdown("**Notes**")
-        st.write(f"- Truth Filter: **{truth_filter}%**")
-        st.write("- Toggle *Remote API* in the left panel to use the live Gateway.")
-        st.write("- Actions appear above; this panel will grow with arena-specific tools.")
-
-st.caption("© 2025 Jesse Ray Landingham Jr · LIPE / HIS · All Rights Reserved")
+# Footer
+st.caption("Manage app")
