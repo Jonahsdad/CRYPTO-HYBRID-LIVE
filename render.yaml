@@ -1,37 +1,9 @@
-# render.yaml — Blueprint to deploy Gateway (FastAPI) + UI (Streamlit)
-
 services:
-  # 1) FastAPI Gateway
   - type: web
     name: his-gateway
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn gateway_main:app --host 0.0.0.0 --port $PORT
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn main:app --host 0.0.0.0 --port $PORT"
     autoDeploy: true
-    healthCheckPath: /health
-    runtime: python
-
-  # 2) Streamlit UI
-  - type: web
-    name: his-ui
-    env: python
-    plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run main.py --server.port=$PORT --server.address=0.0.0.0
-    autoDeploy: true
-    runtime: python
-    envVars:
-      # Wire the UI to the gateway. Because we fix the gateway name above,
-      # Render will give it the URL: https://his-gateway.onrender.com
-      - key: GATEWAY_URL
-        value: https://his-gateway.onrender.com
-      - key: ENV
-        value: production
-      - key: SERVICE
-        value: CRYPTO-HYBRID-LIVE
-
-# (Optional) If you later want managed Redis on Render, uncomment:
-# databases:
-#   - name: his-redis
-#     plan: free
+    region: oregon
