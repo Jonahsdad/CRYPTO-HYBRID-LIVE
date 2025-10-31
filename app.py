@@ -1,89 +1,144 @@
-import os, json, requests
-from datetime import datetime
+# app.py
+import os, time, requests, json
 import streamlit as st
+from datetime import datetime, timezone
 
-st.set_page_config(page_title="Hybrid Intelligence Systems — Core Engine", page_icon="🧬", layout="wide")
+# ---------- Defaults ----------
+DEFAULT_API = os.getenv("HIS_API_URL", "https://crypto-hybrid-live-2.onrender.com")
 
-# ─── Gateway helpers ───────────────────────
-def safe_get(url):
+if "arena" not in st.session_state:
+    st.session_state.arena = "Lottery"
+if "last_json" not in st.session_state:
+    st.session_state.last_json = {}
+if "api_url" not in st.session_state:
+    st.session_state.api_url = DEFAULT_API
+if "compute" not in st.session_state:
+    st.session_state.compute = "Remote API"
+if "strictness" not in st.session_state:
+    st.session_state.strictness = 55
+
+# ---------- API helpers ----------
+def ts():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
+
+def get_status(api_base: str):
     try:
-        r = requests.get(url, timeout=10)
-        return r.ok, r.json() if r.ok else None, None
+        r = requests.get(f"{api_base}/status", timeout=12)
+        r.raise_for_status()
+        return True, r.json()
     except Exception as e:
-        return False, None, str(e)
+        return False, {"ok": False, "error": str(e)}
 
-def safe_post(url, payload):
+def post_forecast(api_base: str, game="pick4", window="last_30", mode="standard", strictness=55):
+    payload = {
+        "game": game,
+        "window": window,
+        "mode": mode,
+        "strictness": strictness
+    }
     try:
-        r = requests.post(url, json=payload, timeout=20)
-        return r.status_code, r.text
+        # prefer v1 route if present
+        url = f"{api_base}/v1/lipe/forecast"
+        r = requests.post(url, json=payload, timeout=18)
+        if r.status_code == 404:
+            # fall back to /forecast if older gateway
+            url = f"{api_base}/forecast"
+            r = requests.post(url, json=payload, timeout=18)
+        r.raise_for_status()
+        return True, r.json()
     except Exception as e:
-        return 0, str(e)
+        return False, {"ok": False, "error": str(e), "note":"Forecast endpoint not reachable"}
 
-def check_status(base):
-    for path in ["/status", "/ping"]:
-        ok, data, err = safe_get(base.rstrip("/") + path)
-        if ok:
-            return {"ok": True, "data": data}
-    return {"ok": False, "error": err or "Status route not reachable"}
-
-def run_forecast(base, strictness):
-    payload = {"game": "pick4", "window": "last_30", "mode": "standard", "strictness": strictness}
-    code, body = safe_post(base.rstrip("/") + "/v1/lipe/forecast", payload)
-    return code, body
-
-# ─── Sidebar ───────────────────────────────
+# ---------- Sidebar (ACTION PANEL) ----------
 with st.sidebar:
     st.caption("System")
-    compute = st.radio("Compute", ["Local (in-app)", "Remote API"], index=1)
-    api_url = st.text_input("API URL (Remote)", "https://his-gateway.onrender.com")
-    signal_strictness = st.slider("Signal Strictness", 0, 100, 55)
+    st.radio(
+        "Compute",
+        ["Local (in-app)", "Remote API"],
+        index=1 if st.session_state.compute == "Remote API" else 0,
+        key="compute",
+        help="Remote API uses your Render gateway. Local runs inside this app (dev only).",
+    )
+
+    st.text_input(
+        "API URL (Remote)",
+        value=st.session_state.api_url,
+        key="api_url",
+        help="Your Render gateway base URL",
+    )
+
+    st.caption("Truth Filter")
+    st.slider("Signal Strictness", 0, 100, st.session_state.strictness, key="strictness",
+              help="Controls how strict the forecast filter is.")
 
     st.divider()
-    st.caption("⚙️ Actions")
+    st.caption("Actions")
 
-    if st.button("⚡ Ping Gateway", use_container_width=True):
-        with st.spinner("Pinging..."):
-            ok, data, err = safe_get(api_url.rstrip("/") + "/ping")
-        if ok:
-            st.toast("Gateway OK ✅")
-            st.json(data)
-        else:
-            st.error(f"Ping failed: {err}")
-
-    if st.button("🔮 Get Forecast for Home", use_container_width=True):
-        with st.spinner("Running forecast..."):
-            code, body = run_forecast(api_url, signal_strictness)
-        if code == 200:
-            st.toast("Forecast complete ✅")
-            st.json(json.loads(body))
-        elif code == 0:
-            st.error(f"Network error: {body}")
-        else:
-            st.error(f"Forecast failed (HTTP {code})")
-            st.code(body)
+    colA, colB = st.columns(2)
+    ping_clicked = colA.button("⚡ Ping Gateway")
+    forecast_clicked = colB.button("🔮 Get Forecast for Home")
 
     st.caption("API URL")
-    st.code(api_url, language="text")
+    st.code(st.session_state.api_url, language="text")
 
-# ─── Main ──────────────────────────────────
-st.markdown("# 🧬 Hybrid Intelligence Systems — Core Engine")
-st.markdown("_Powered by LIPE — Developed by Jesse Ray Landingham Jr_")
+    # small live-out pane
+    if st.session_state.last_json:
+        st.json(st.session_state.last_json)
 
-status = check_status(api_url)
-is_ok = status["ok"]
+# ---------- Handle actions ----------
+gateway_ok, status_json = get_status(st.session_state.api_url)
+if ping_clicked:
+    gateway_ok, status_json = get_status(st.session_state.api_url)
+    st.session_state.last_json = {"status": "ok" if gateway_ok else "error", "data": status_json}
 
-if is_ok:
-    st.success("● Gateway Online")
-else:
-    st.error("○ Gateway Offline")
+if forecast_clicked:
+    ok, data = post_forecast(
+        st.session_state.api_url,
+        game="pick4",
+        window="last_30",
+        mode="standard",
+        strictness=st.session_state.strictness,
+    )
+    st.session_state.last_json = data if ok else {"status":"error","data": data}
 
-st.write("**Gateway URL:**", api_url)
-st.write("**Checked:**", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"))
+# ---------- Header & gateway badge ----------
+st.markdown("## 🧠 Hybrid Intelligence Systems —\n### Core Engine")
+st.caption("Powered by LIPE — Developed by Jesse Ray Landingham Jr")
 
-st.code(json.dumps(status, indent=2), language="json")
+badge = "🟢 Gateway Online" if gateway_ok else "🔴 Gateway Offline"
+bg = "#113d2b" if gateway_ok else "#3d1111"
+st.markdown(
+    f"""
+    <div style='background:{bg};padding:8px 12px;border-radius:8px;color:#d9f8e6 if gateway_ok else #ffdada'>
+    {badge}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
+st.caption(f"Gateway URL: {st.session_state.api_url}")
+st.caption(f"Checked: {ts()}")
+
+# show latest payload in main area
+st.json({"ok": gateway_ok, "data": status_json} if gateway_ok else {"ok": False, "error": "Status route not reachable"})
+
+# ---------- Choose your arena ----------
 st.markdown("## Choose your arena")
-cols = st.columns(3)
-for label in ["🎰 Lottery", "💰 Crypto", "📈 Stocks"]:
-    with cols.pop(0):
-        st.button(label)
+c1, c2, c3 = st.columns(3)
+if c1.button("🏛️ Lottery"):
+    st.session_state.arena = "Lottery"
+if c2.button("💰 Crypto"):
+    st.session_state.arena = "Crypto"
+if c3.button("📈 Stocks"):
+    st.session_state.arena = "Stocks"
+
+st.markdown("### Home Arena")
+st.write(f"Selected: **{st.session_state.arena}**")
+
+# Simple per-arena placeholder sections (replace with your real modules)
+if st.session_state.arena == "Lottery":
+    st.info("Lottery module: daily numbers, picks, entropy, RP overlays.")
+elif st.session_state.arena == "Crypto":
+    st.info("Crypto module: live pricing, signals, overlays.")
+elif st.session_state.arena == "Stocks":
+    st.info("Stocks module: charts, momentum, factor overlays.")
