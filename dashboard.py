@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 import requests, json
 from datetime import datetime
 
@@ -15,8 +15,11 @@ with st.sidebar:
 
     st.markdown("### 🔍 Actions")
     if st.button("Ping Gateway"):
-        r = requests.get(DEFAULT_API)
-        st.json(r.json())
+        try:
+            r = requests.get(DEFAULT_API)
+            st.json(r.json())
+        except Exception as e:
+            st.error(f"Ping failed: {e}")
 
     st.markdown("### 🎯 Get Forecast")
     signal_strictness = st.slider("Signal Strictness", 0, 100, 55)
@@ -46,19 +49,28 @@ if "Lottery" in arena:
     st.info("Lottery module: daily numbers, picks, entropy, RP overlays.")
     if st.button("Get Lottery Forecast"):
         payload = {"game": "pick4", "window": "last_30", "mode": "standard", "strictness": signal_strictness}
-        r = requests.post(f"{DEFAULT_API}/v1/lipe/forecast", json=payload)
-        st.json(r.json())
+        try:
+            r = requests.post(f"{DEFAULT_API}/v1/lipe/forecast", json=payload)
+            st.json(r.json())
+        except Exception as e:
+            st.error(f"Request failed: {e}")
 
 elif "Crypto" in arena:
     st.info("Crypto module: live market momentum, entropy, and top signals.")
     if st.button("Scan Crypto"):
         payload = {"universe": ["bitcoin","ethereum","solana","chainlink","avalanche-2"], "mode": "standard", "strictness": signal_strictness}
-        r = requests.post(f"{DEFAULT_API}/v1/crypto/scan", json=payload)
-        st.json(r.json())
+        try:
+            r = requests.post(f"{DEFAULT_API}/v1/crypto/scan", json=payload)
+            st.json(r.json())
+        except Exception as e:
+            st.error(f"Request failed: {e}")
 
 elif "Stocks" in arena:
     st.info("Stocks module: intraday pressure, trend bias, and RP scoring.")
     if st.button("Scan Stocks"):
         payload = {"watchlist": ["AAPL","NVDA","MSFT","META","TSLA"], "mode": "standard", "strictness": signal_strictness}
-        r = requests.post(f"{DEFAULT_API}/v1/stocks/scan", json=payload)
-        st.json(r.json())
+        try:
+            r = requests.post(f"{DEFAULT_API}/v1/stocks/scan", json=payload)
+            st.json(r.json())
+        except Exception as e:
+            st.error(f"Request failed: {e}")
