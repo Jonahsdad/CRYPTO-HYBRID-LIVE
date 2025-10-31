@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Literal, List, Dict, Any
