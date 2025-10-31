@@ -1,144 +1,148 @@
-# app.py
-import os, time, requests, json
+# app.py (Streamlit UI)
+import os, requests, json
 import streamlit as st
 from datetime import datetime, timezone
 
-# ---------- Defaults ----------
-DEFAULT_API = os.getenv("HIS_API_URL", "https://crypto-hybrid-live-2.onrender.com")
+DEFAULT_API = os.getenv("HIS_API_URL", "https://his-gateway.onrender.com")
 
-if "arena" not in st.session_state:
-    st.session_state.arena = "Lottery"
-if "last_json" not in st.session_state:
-    st.session_state.last_json = {}
-if "api_url" not in st.session_state:
-    st.session_state.api_url = DEFAULT_API
-if "compute" not in st.session_state:
-    st.session_state.compute = "Remote API"
-if "strictness" not in st.session_state:
-    st.session_state.strictness = 55
+# --------- Session Defaults ----------
+st.set_page_config(page_title="HIS — Core Engine", page_icon="🧠", layout="wide")
+SS = st.session_state
+SS.setdefault("arena", "Lottery")
+SS.setdefault("api_url", DEFAULT_API)
+SS.setdefault("compute", "Remote API")
+SS.setdefault("strictness", 55)
+SS.setdefault("last_json", {})
 
-# ---------- API helpers ----------
 def ts():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
 
-def get_status(api_base: str):
+# --------- HTTP helpers ----------
+def safe_get(url, **kw):
     try:
-        r = requests.get(f"{api_base}/status", timeout=12)
+        r = requests.get(url, timeout=kw.pop("timeout", 12))
         r.raise_for_status()
         return True, r.json()
     except Exception as e:
-        return False, {"ok": False, "error": str(e)}
+        return False, {"error": str(e)}
 
-def post_forecast(api_base: str, game="pick4", window="last_30", mode="standard", strictness=55):
-    payload = {
-        "game": game,
-        "window": window,
-        "mode": mode,
-        "strictness": strictness
-    }
+def safe_post(url, payload, **kw):
     try:
-        # prefer v1 route if present
-        url = f"{api_base}/v1/lipe/forecast"
-        r = requests.post(url, json=payload, timeout=18)
-        if r.status_code == 404:
-            # fall back to /forecast if older gateway
-            url = f"{api_base}/forecast"
-            r = requests.post(url, json=payload, timeout=18)
+        r = requests.post(url, json=payload, timeout=kw.pop("timeout", 18))
         r.raise_for_status()
         return True, r.json()
     except Exception as e:
-        return False, {"ok": False, "error": str(e), "note":"Forecast endpoint not reachable"}
+        return False, {"error": str(e)}
 
-# ---------- Sidebar (ACTION PANEL) ----------
+def gateway_status():
+    return safe_get(f"{SS.api_url}/status")
+
+def run_lottery(game="pick4", window="last_30", mode="standard"):
+    payload = {"game": game, "window": window, "mode": mode, "strictness": SS.strictness}
+    ok, data = safe_post(f"{SS.api_url}/v1/lipe/forecast", payload)
+    if not ok and "404" in str(data.get("error","")):
+        ok, data = safe_post(f"{SS.api_url}/forecast", payload)
+    return ok, data
+
+def run_crypto(universe=None, mode="standard"):
+    if universe is None:
+        universe = ["BTC","ETH","SOL","LINK","AVAX","RNDR","TIA"]
+    payload = {"universe": universe, "mode": mode, "strictness": SS.strictness}
+    return safe_post(f"{SS.api_url}/v1/crypto/scan", payload)
+
+def run_stocks(watchlist=None, mode="standard"):
+    if watchlist is None:
+        watchlist = ["AAPL","NVDA","MSFT","META","TSLA","AMZN"]
+    payload = {"watchlist": watchlist, "mode": mode, "strictness": SS.strictness}
+    return safe_post(f"{SS.api_url}/v1/stocks/scan", payload)
+
+# --------- Sidebar (Action Panel) ----------
 with st.sidebar:
     st.caption("System")
-    st.radio(
-        "Compute",
-        ["Local (in-app)", "Remote API"],
-        index=1 if st.session_state.compute == "Remote API" else 0,
-        key="compute",
-        help="Remote API uses your Render gateway. Local runs inside this app (dev only).",
-    )
-
-    st.text_input(
-        "API URL (Remote)",
-        value=st.session_state.api_url,
-        key="api_url",
-        help="Your Render gateway base URL",
-    )
-
+    st.radio("Compute", ["Local (in-app)", "Remote API"],
+             index=1 if SS.compute == "Remote API" else 0, key="compute")
+    st.text_input("API URL (Remote)", value=SS.api_url, key="api_url")
     st.caption("Truth Filter")
-    st.slider("Signal Strictness", 0, 100, st.session_state.strictness, key="strictness",
-              help="Controls how strict the forecast filter is.")
+    st.slider("Signal Strictness", 0, 100, SS.strictness, key="strictness")
 
     st.divider()
     st.caption("Actions")
 
-    colA, colB = st.columns(2)
-    ping_clicked = colA.button("⚡ Ping Gateway")
-    forecast_clicked = colB.button("🔮 Get Forecast for Home")
+    col1, col2 = st.columns(2)
+    ping_clicked = col1.button("⚡ Ping Gateway")
+    go_clicked = col2.button("🚀 Run")
 
-    st.caption("API URL")
-    st.code(st.session_state.api_url, language="text")
+    st.caption("Last Response")
+    if SS.last_json:
+        st.json(SS.last_json)
 
-    # small live-out pane
-    if st.session_state.last_json:
-        st.json(st.session_state.last_json)
-
-# ---------- Handle actions ----------
-gateway_ok, status_json = get_status(st.session_state.api_url)
+# --------- Handle Actions ----------
+gw_ok, gw_data = gateway_status()
 if ping_clicked:
-    gateway_ok, status_json = get_status(st.session_state.api_url)
-    st.session_state.last_json = {"status": "ok" if gateway_ok else "error", "data": status_json}
+    gw_ok, gw_data = gateway_status()
+    SS.last_json = {"status": "ok" if gw_ok else "error", "data": gw_data}
 
-if forecast_clicked:
-    ok, data = post_forecast(
-        st.session_state.api_url,
-        game="pick4",
-        window="last_30",
-        mode="standard",
-        strictness=st.session_state.strictness,
-    )
-    st.session_state.last_json = data if ok else {"status":"error","data": data}
+if go_clicked:
+    if SS.arena == "Lottery":
+        ok, data = run_lottery(game="pick4", window="last_30", mode="standard")
+    elif SS.arena == "Crypto":
+        ok, data = run_crypto()
+    else:
+        ok, data = run_stocks()
+    SS.last_json = data if ok else {"status":"error","data":data}
 
-# ---------- Header & gateway badge ----------
+# --------- Header ----------
 st.markdown("## 🧠 Hybrid Intelligence Systems —\n### Core Engine")
 st.caption("Powered by LIPE — Developed by Jesse Ray Landingham Jr")
 
-badge = "🟢 Gateway Online" if gateway_ok else "🔴 Gateway Offline"
-bg = "#113d2b" if gateway_ok else "#3d1111"
+badge = "🟢 Gateway Online" if gw_ok else "🔴 Gateway Offline"
+bg = "#123e2b" if gw_ok else "#3e1b1b"
 st.markdown(
-    f"""
-    <div style='background:{bg};padding:8px 12px;border-radius:8px;color:#d9f8e6 if gateway_ok else #ffdada'>
-    {badge}
-    </div>
-    """,
+    f"<div style='background:{bg};padding:8px 12px;border-radius:8px;color:white'>{badge}</div>",
     unsafe_allow_html=True,
 )
-
-st.caption(f"Gateway URL: {st.session_state.api_url}")
+st.caption(f"Gateway URL: {SS.api_url}")
 st.caption(f"Checked: {ts()}")
+st.json({"ok": gw_ok, "data": gw_data} if gw_ok else {"ok": False, "error":"Status route not reachable"})
 
-# show latest payload in main area
-st.json({"ok": gateway_ok, "data": status_json} if gateway_ok else {"ok": False, "error": "Status route not reachable"})
-
-# ---------- Choose your arena ----------
+# --------- Choose your arena (main canvas) ----------
 st.markdown("## Choose your arena")
 c1, c2, c3 = st.columns(3)
-if c1.button("🏛️ Lottery"):
-    st.session_state.arena = "Lottery"
-if c2.button("💰 Crypto"):
-    st.session_state.arena = "Crypto"
-if c3.button("📈 Stocks"):
-    st.session_state.arena = "Stocks"
+if c1.button("🏛️ Lottery"): SS.arena = "Lottery"
+if c2.button("💰 Crypto"):   SS.arena = "Crypto"
+if c3.button("📈 Stocks"):   SS.arena = "Stocks"
 
 st.markdown("### Home Arena")
-st.write(f"Selected: **{st.session_state.arena}**")
+st.write(f"Selected: **{SS.arena}**")
 
-# Simple per-arena placeholder sections (replace with your real modules)
-if st.session_state.arena == "Lottery":
+# --------- Per-arena content ----------
+if SS.arena == "Lottery":
+    a, b, c = st.columns(3)
+    if a.button("🎯 Pick 3 Forecast"): SS.last_json = run_lottery("pick3")[1]
+    if b.button("🧠 Pick 4 Forecast"): SS.last_json = run_lottery("pick4")[1]
+    if c.button("🍀 Lucky Day Forecast"): SS.last_json = run_lottery("ldl")[1]
+
     st.info("Lottery module: daily numbers, picks, entropy, RP overlays.")
-elif st.session_state.arena == "Crypto":
-    st.info("Crypto module: live pricing, signals, overlays.")
-elif st.session_state.arena == "Stocks":
-    st.info("Stocks module: charts, momentum, factor overlays.")
+    if SS.last_json:
+        st.subheader("Forecast Result")
+        st.json(SS.last_json)
+
+elif SS.arena == "Crypto":
+    a, b = st.columns(2)
+    if a.button("🔎 Scan Top Coins"): SS.last_json = run_crypto()[1]
+    if b.button("🧭 NBC Mode Scan"):  SS.last_json = run_crypto(mode="nbc")[1]
+
+    st.info("Crypto module: live signals, entropy, NBC overlays.")
+    if SS.last_json:
+        st.subheader("Crypto Scan")
+        st.json(SS.last_json)
+
+elif SS.arena == "Stocks":
+    a, b = st.columns(2)
+    if a.button("🔍 Scan Watchlist"): SS.last_json = run_stocks()[1]
+    if b.button("🧭 NBC Mode Scan"):  SS.last_json = run_stocks(mode="nbc")[1]
+
+    st.info("Stocks module: momentum, factor overlays, pressure index.")
+    if SS.last_json:
+        st.subheader("Stocks Scan")
+        st.json(SS.last_json)
