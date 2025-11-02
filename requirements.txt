@@ -1,8 +1,8 @@
-streamlit>=1.39
-requests>=2.32
-pandas>=2.0
-python-dateutil>=2.9
-duckdb>=1.0.0
-tenacity>=9.0.0
-pydantic>=2.7
-pydantic-settings>=2.3
+streamlit==1.51.0
+requests==2.32.3
+pandas==2.2.2
+python-dateutil==2.9.0.post0
+duckdb==1.0.0
+tenacity==9.0.0
+pydantic==2.7.4
+pydantic-settings==2.3.4
