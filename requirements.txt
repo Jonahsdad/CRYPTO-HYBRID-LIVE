@@ -1,12 +1,6 @@
-streamlit==1.51.0
-requests==2.32.3
-pandas==2.2.2
-python-dateutil==2.9.0.post0
+streamlit==1.39.0
+pandas==2.2.3
 duckdb==1.0.0
-tenacity==9.0.0
-pydantic==2.7.4
-pydantic-settings==2.3.4
-typing-extensions==4.12.2
-tzdata==2025.2
-setuptools==70.0.0
-wheel==0.44.0
+requests==2.32.3
+plotly==5.23.0
+python-dotenv==1.0.1
