@@ -6,3 +6,5 @@ duckdb==1.0.0
 tenacity==9.0.0
 pydantic==2.7.4
 pydantic-settings==2.3.4
+typing-extensions==4.12.2
+tzdata==2025.2
