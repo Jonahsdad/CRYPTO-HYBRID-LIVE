@@ -8,3 +8,5 @@ pydantic==2.7.4
 pydantic-settings==2.3.4
 typing-extensions==4.12.2
 tzdata==2025.2
+setuptools==70.0.0
+wheel==0.44.0
