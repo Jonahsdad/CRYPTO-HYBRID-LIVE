@@ -2,10 +2,14 @@ services:
   - type: web
     name: crypto-hybrid-live
     env: python
-    buildCommand: >
-      rm -rf ~/.cache/pip || true &&
-      rm -rf /opt/render/project/src/.render-build-cache || true &&
-      pip install --upgrade pip setuptools wheel --no-cache-dir &&
+    buildCommand: |
+      echo "🧹 Clearing ALL cache and old layers..."
+      rm -rf ~/.cache/pip || true
+      rm -rf /opt/render/project/src/.render-build-cache || true
+
+      echo "🚀 Installing requirements from scratch..."
+      pip install --upgrade pip setuptools wheel --no-cache-dir
       pip install --no-cache-dir -r requirements.txt
-    startCommand: >
+    startCommand: |
+      echo "✅ Starting Streamlit App..."
       streamlit run app_v3/app.py --server.port $PORT --server.address 0.0.0.0
