@@ -1,81 +1,33 @@
+# app_v3/app.py
+import importlib
 import streamlit as st
-from importlib import import_module
+from pages._registry import ARENAS
 
-st.set_page_config(page_title="PunchLogic | Command", layout="wide")
+st.set_page_config(page_title="PunchLogic Command", layout="wide")
 
-# -------- GLOBAL CONSTANTS ----------
-ARENAS = [
-    "Home", "Crypto", "Sports", "Lottery", "Stocks",
-    "Options", "Real Estate", "Commodities", "Forex", "RWA"
-]
+# Header
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.markdown("### **PunchLogic Command**  | Global Forecast OS")
+with col2:
+    st.metric("Engine", "Idle")
 
-# -------- SESSION DEFAULTS ----------
-st.session_state.setdefault("arena", "Home")
-st.session_state.setdefault("engine_status", "idle")
+# Choose Your Arena (left panel / top control)
+arena_names = [a.key for a in ARENAS]
+selected = st.selectbox("Choose Your Arena", arena_names, index=0)
 
-# -------- HEADER CARD ----------
-with st.container(border=True):
-    c1, c2, c3 = st.columns([2,1,1])
-    with c1:
-        st.subheader("PunchLogic")
-        st.caption("Command")
-    with c2:
-        st.caption("Global")
-        st.write("Forecast OS")
-    with c3:
-        dot = "🟢" if st.session_state["engine_status"] != "idle" else "🟡"
-        st.caption(f"Engine: {st.session_state['engine_status']}")
-        st.write(dot)
+# Load and run the selected arena's Overview.show()
+arena = next(a for a in ARENAS if a.key == selected)
 
-# -------- LEFT PANEL ----------
-with st.sidebar:
-    st.header("Control Panel")
-    cA, cB = st.columns(2)
-    if cA.button("▶ Run / Refresh"):
-        st.session_state["engine_status"] = "running"
-        st.toast("Run triggered")
-    if cB.button("⟳ Clear Cache"):
-        st.cache_data.clear()
-        st.cache_resource.clear()
-        st.toast("Cache cleared")
+try:
+    mod = importlib.import_module(arena.module)
+    if hasattr(mod, "show"):
+        mod.show()
+    else:
+        st.error(f"`{arena.module}` is missing a `show()` function.")
+except Exception as e:
+    st.error(f"Failed to load `{arena.module}`")
+    st.exception(e)
 
-    st.divider()
-    st.caption("Quick Jump")
-    for a in ARENAS:
-        if st.button(a, key=f"jump_{a}"):
-            st.session_state["arena"] = a
-
-# -------- ARENA SELECTOR ----------
-choice = st.selectbox(
-    "Choose Your Arena",
-    ARENAS,
-    index=ARENAS.index(st.session_state["arena"])
-)
-if choice != st.session_state["arena"]:
-    st.session_state["arena"] = choice
-
-# -------- HOME GRID ----------
-def arena_grid():
-    cols = st.columns(3)
-    for i, a in enumerate(ARENAS[1:10]):  # skip Home
-        with cols[i % 3]:
-            if st.button(a, use_container_width=True, key=f"grid_{a}"):
-                st.session_state["arena"] = a
-
-# -------- CENTRAL ROUTER ----------
-def render_current_arena():
-    arena = st.session_state["arena"]
-    if arena == "Home":
-        from app_v3.pages._registry import HOME_RENDER
-        HOME_RENDER()
-        return
-
-    from app_v3.pages._registry import MODULE_MAP
-    try:
-        mod_path = MODULE_MAP[arena]
-        mod = import_module(mod_path)
-        mod.render()
-    except Exception as ex:
-        st.error(f"Failed to load page for {arena}: {ex}")
-
-render_current_arena()
+# Footer tip
+st.caption("Tip: Navigation is instant. No full reloads — state stays in session.")
