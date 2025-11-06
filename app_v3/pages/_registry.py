@@ -1,25 +1,21 @@
-import streamlit as st
+# app_v3/pages/_registry.py
+from dataclasses import dataclass
 
-MODULE_MAP = {
-    "Crypto": "app_v3.pages.02_Crypto.Overview",
-    "Sports": "app_v3.pages.03_Sports.Overview",
-    "Lottery": "app_v3.pages.04_Lottery.Overview",
-    "Stocks": "app_v3.pages.05_Stocks.Overview",
-    "Options": "app_v3.pages.06_Options.Overview",
-    "Real Estate": "app_v3.pages.07_RealEstate.Overview",
-    "Commodities": "app_v3.pages.08_Commodities.Overview",
-    "Forex": "app_v3.pages.09_Forex.Overview",
-    "RWA": "app_v3.pages.10_RWA.Overview",
-}
+@dataclass(frozen=True)
+class Arena:
+    key: str
+    title: str
+    module: str   # import path to the Overview.show()
 
-def HOME_RENDER():
-    st.header("Home")
-    st.caption("Status: UI Shell Ready — state is kept in session.")
-    st.write("Arenas Installed: **Crypto, Sports, Lottery, Stocks, Options, Real Estate, Commodities, Forex, RWA**")
-
-    cols = st.columns(3)
-    arenas = list(MODULE_MAP.keys())
-    for i, a in enumerate(arenas[:9]):
-        with cols[i % 3]:
-            if st.button(a, use_container_width=True, key=f"homegrid_{a}"):
-                st.session_state["arena"] = a
+ARENAS = [
+    Arena("Home",        "Home",                          "pages.01_Home"),  # optional if you have one
+    Arena("Crypto",      "Crypto Arena",                  "pages.02_Crypto.Overview"),
+    Arena("Sports",      "Sports Arena",                  "pages.03_Sports.Overview"),
+    Arena("Lottery",     "Lottery Arena",                 "pages.04_Lottery.Overview"),
+    Arena("Stocks",      "Stocks Arena",                  "pages.05_Stocks.Overview"),
+    Arena("Options",     "Options Arena",                 "pages.06_Options.Overview"),
+    Arena("RealEstate",  "Real Estate Arena",             "pages.07_RealEstate.Overview"),
+    Arena("Commodities", "Commodities Arena",             "pages.08_Commodities.Overview"),
+    Arena("Forex",       "Forex Arena",                   "pages.09_Forex.Overview"),
+    Arena("RWA",         "RWA Arena",                     "pages.10_RWA.Overview"),
+]
