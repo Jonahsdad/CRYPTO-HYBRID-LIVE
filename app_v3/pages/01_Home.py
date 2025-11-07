@@ -1,6 +1,6 @@
 import streamlit as st
 
-def render():
-    st.header("Home")
-    st.caption("Welcome to PunchLogic Command Center")
-    st.write("Use the selector above or the left panel to open an arena.")
+def show():
+    st.title("🏠 Home Arena")
+    st.write("Welcome to **HYBRID INTELLIGENCE SYSTEMS | Global Forecast OS**")
+    st.write("Select an arena from the dropdown to begin exploring live intelligence modules.")
