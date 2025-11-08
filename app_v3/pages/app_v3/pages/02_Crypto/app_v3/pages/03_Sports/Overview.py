@@ -3,6 +3,7 @@ import streamlit as st
 def show():
     st.title("🏈 Sports — Overview")
     st.caption("HYBRID INTELLIGENCE SYSTEMS | Global Forecast OS")
+st.session_state["arena_name"] = "Sports"
 
     col1, col2, col3 = st.columns(3)
     with col1: st.metric("Leagues", "NFL / NBA / MLB / NHL")
