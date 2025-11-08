@@ -1,7 +1,9 @@
 import importlib
 import streamlit as st
 from pages._registry import ARENAS
-
+st.sidebar.title("HYBRID INTELLIGENCE SYSTEMS")
+st.sidebar.caption("Forecast OS • powered by LIPE")
+st.sidebar.markdown("---")
 BRAND = "HYBRID INTELLIGENCE SYSTEMS"
 
 st.set_page_config(page_title=f"{BRAND} — Command", layout="wide")
