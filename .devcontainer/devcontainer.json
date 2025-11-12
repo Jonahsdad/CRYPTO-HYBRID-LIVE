@@ -1,12 +1,12 @@
 {
-  "name": "HIS – Docker",
+  "name": "HIS — Docker",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "version": "latest",
       "moby": true
     }
   },
-  "forwardPorts": [8000, 5173, 5432, 6379],
+  "forwardPorts": [8000, 5173, 6379],
   "postCreateCommand": "cp -n .env.example .env || true",
   "postStartCommand": "docker compose up --build -d",
   "shutdownAction": "stopCompose"
