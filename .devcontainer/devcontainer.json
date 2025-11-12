@@ -7,7 +7,15 @@
     }
   },
   "forwardPorts": [8000, 5173, 6379],
+  "portsAttributes": {
+    "8000": { "label": "API", "requireLocalPort": false },
+    "5173": { "label": "UI",  "requireLocalPort": false },
+    "6379": { "label": "Redis" }
+  },
   "postCreateCommand": "cp -n .env.example .env || true",
-  "postStartCommand": "docker compose up --build -d",
-  "shutdownAction": "stopCompose"
+  "postStartCommand": "docker compose up --build -d || docker-compose up --build -d",
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": { "settings": { "terminal.integrated.defaultProfile.linux": "bash" } }
+  }
 }
