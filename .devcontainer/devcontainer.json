@@ -1,10 +1,8 @@
+# .devcontainer/devcontainer.json
 {
   "name": "HIS — Docker",
   "features": {
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {
-      "version": "latest",
-      "moby": true
-    }
+    "ghcr.io/devcontainers/features/docker-in-docker:2": { "version": "latest", "moby": true }
   },
   "forwardPorts": [8000, 5173, 6379],
   "portsAttributes": {
@@ -14,8 +12,74 @@
   },
   "postCreateCommand": "cp -n .env.example .env || true",
   "postStartCommand": "docker compose up --build -d || docker-compose up --build -d",
-  "shutdownAction": "stopCompose",
-  "customizations": {
-    "vscode": { "settings": { "terminal.integrated.defaultProfile.linux": "bash" } }
-  }
+  "shutdownAction": "stopCompose"
 }
+
+# .env.example
+API_HOST=0.0.0.0
+API_PORT=8000
+CORS_ORIGINS=http://localhost:5173
+DATABASE_URL=sqlite:///./app.db
+REDIS_URL=redis://redis:6379/0
+X_API_KEY_SEED=dev-key
+VITE_API=http://localhost:8000/v1
+VITE_API_KEY=dev-key
+
+# docker-compose.yml  (expects existing backend/ frontend/ from our prior drop)
+version: "3.9"
+services:
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  backend:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    env_file: [.env]
+    environment:
+      API_HOST: ${API_HOST}
+      API_PORT: ${API_PORT}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: ${REDIS_URL}
+      X_API_KEY_SEED: ${X_API_KEY_SEED}
+    depends_on: [redis]
+    ports: ["8000:8000"]
+
+  frontend:
+    build: { context: ., dockerfile: frontend/Dockerfile }
+    env_file: [.env]
+    environment:
+      VITE_API: ${VITE_API}
+      VITE_API_KEY: ${VITE_API_KEY}
+    depends_on: [backend]
+    ports: ["5173:80"]
+
+# Makefile  (quality-of-life)
+SHELL := /bin/bash
+.PHONY: up down logs doctor nuke
+
+up:      ## build+start all
+	docker compose up --build -d
+down:    ## stop+remove
+	docker compose down -v
+logs:    ## tail logs
+	docker compose logs -f --tail=200
+doctor:  ## run endpoint checks
+	bash scripts/doctor.sh
+nuke:    ## wipe containers/images/volumes (danger)
+	docker compose down -v || true; docker system prune -af || true
+
+# scripts/doctor.sh
+#!/usr/bin/env bash
+set -euo pipefail
+API="${VITE_API:-http://localhost:8000/v1}"
+KEY="${VITE_API_KEY:-dev-key}"
+echo "Checking API… ${API}"
+curl -fsS ${API%/v1}/healthz | jq . || { echo "❌ /healthz failed"; exit 1; }
+curl -fsS "$API/sources" -H "x-api-key: ${KEY}" | jq '.[0]' || { echo "❌ /sources failed"; exit 1; }
+SRC=$(curl -fsS "$API/sources" -H "x-api-key: ${KEY}" | jq -r '.[0].id')
+SYM=$(curl -fsS "$API/symbols/$SRC" -H "x-api-key: ${KEY}" | jq -r '.[0].symbol')
+echo "Using source=$SRC symbol=$SYM"
+curl -fsS "$API/timeseries/$SRC/$SYM" -H "x-api-key: ${KEY}" | jq '.points | length'
+curl -fsS "$API/predict/$SRC/$SYM?horizon=5" -H "x-api-key: ${KEY}" | jq '.forecast[0]'
+echo "✅ API OK"
