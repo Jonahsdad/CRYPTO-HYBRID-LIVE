@@ -31,3 +31,11 @@ It compares **raw market heat** (volume vs. market cap) with a **Truth Filter** 
 **Created by:** Jonahsdad  
 **Framework:** [Streamlit.io](https://streamlit.io)  
 **API Source:** [CoinGecko](https://www.coingecko.com/en/api)
+# REPO: his-streamlit-flagship
+# Push this whole tree to GitHub and deploy to Streamlit Cloud.
+
+# -----------------------------------------
+# FILE: README.md
+# -----------------------------------------
+# HIS — Streamlit Flagship (Crypto v1)
+...
