@@ -1,0 +1,269 @@
+# ========================================
+# FILE: pages/1_Crypto_Flagship.py
+# ========================================
+from __future__ import annotations
+
+import os
+from typing import Any, Dict, List
+
+import pandas as pd
+import plotly.graph_objs as go
+import streamlit as st
+
+from lib.api import (
+    set_api_base, set_identity, get_api_base,
+    api_ping, api_lipe_forecast, api_lipe_strategy_eval,
+    api_signals_current, api_wins, api_checkout,
+    api_billing_portal, api_webhook_status, ApiHTTPError
+)
+
+ARENA = "crypto"
+st.set_page_config(page_title="Crypto Flagship — HIS", page_icon="🟣", layout="wide")
+st.title("🟣 Crypto Flagship")
+st.caption("Forecast bands • Entropy • Regime • Signals • Wins • Strategy — **Powered by LIPE**")
+
+# ---------------- Sidebar ----------------
+with st.sidebar:
+    st.subheader("Connection")
+    api_base = st.text_input("API Base", os.getenv("HIS_API_BASE", get_api_base()))
+    if api_base: set_api_base(api_base)
+
+    st.subheader("Identity")
+    email = st.text_input("Email", os.getenv("HIS_USER_EMAIL", "you@punch.dev"))
+    tenant = st.text_input("Team / Tenant", os.getenv("HIS_TENANT_ID", "punch-dev"))
+    token = st.text_input("Bearer Token (optional)", value=os.getenv("HIS_BEARER", ""), type="password")
+    if st.button("Apply", use_container_width=True):
+        set_identity(email=email, tenant_id=tenant)
+        st.success("Applied connection & identity")
+
+    st.divider()
+    st.subheader("Status")
+    try:
+        pong = api_ping(token or None)
+        st.success(f"Core online • v{pong.get('version','?')}")
+    except Exception as e:
+        st.error(f"Core unreachable: {e}")
+
+    # ---- Billing portal + webhook badge ----
+    st.subheader("Billing")
+    colbp1, colbp2 = st.columns([1, 1])
+    with colbp1:
+        if st.button("Open Customer Portal", use_container_width=True):
+            try:
+                pr = api_billing_portal(token or None)
+                url = pr.get("url") or pr.get("portal_url")
+                if url:
+                    st.markdown(f"[Open portal ↗]({url})")
+                else:
+                    st.info("Portal URL not returned.")
+            except Exception as ex:
+                st.error(f"Portal error: {ex}")
+    with colbp2:
+        try:
+            ws = api_webhook_status(token or None)
+            ok = bool(ws.get("ok", False) or ws.get("webhook_ok", False))
+            st.markdown(
+                f"<div style='padding:6px 10px;border-radius:999px;"
+                f"background:{'rgba(29,215,91,0.1)' if ok else 'rgba(255,77,109,0.1)'};"
+                f"border:1px solid {'#1dd75b55' if ok else '#ff4d6d55'};"
+                f"font-size:13px;'>Webhook: <b>{'healthy' if ok else 'check logs'}</b></div>",
+                unsafe_allow_html=True
+            )
+        except Exception:
+            st.markdown(
+                "<div style='padding:6px 10px;border-radius:999px;"
+                "background:rgba(255,179,0,0.1);border:1px solid #ffb30055;"
+                "font-size:13px;'>Webhook: <b>unknown</b></div>",
+                unsafe_allow_html=True
+            )
+
+# --------------- Inputs ---------------
+row = st.columns([1.5, 1.2, 1.2, 1.2])
+with row[0]:
+    symbol = st.text_input("Symbol", value="BTCUSDT")
+with row[1]:
+    horizon = st.slider("Horizon (steps)", 1, 30, 7)
+with row[2]:
+    refresh_fc = st.button("Run Forecast", use_container_width=True)
+with row[3]:
+    st.empty()
+
+# --------------- Cached calls ---------------
+@st.cache_data(ttl=15, show_spinner=False)
+def _forecast_cached(tok: str, arena: str, sym: str, hz: int) -> Dict[str, Any]:
+    return api_lipe_forecast(tok or None, arena, sym, hz)
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _signals_cached(tok: str, arena: str, sym: str | None, limit: int) -> List[Dict[str,Any]]:
+    return api_signals_current(tok or None, arena, sym, limit)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _wins_cached(tok: str, arena: str, sym: str | None, limit: int) -> List[Dict[str,Any]]:
+    return api_wins(tok or None, arena, sym, limit)
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _strategy_eval_cached(tok: str, arena: str, sym: str, spec: Dict[str,Any], lookback: int) -> Dict[str,Any]:
+    return api_lipe_strategy_eval(tok or None, arena, sym, spec, lookback_days=lookback)
+
+# --------------- Helpers ---------------
+def _plot_forecast(evt: Dict[str, Any]) -> go.Figure:
+    fc = evt.get("forecast") or {}
+    pts: List[Dict[str, Any]] = fc.get("points") or evt.get("points") or []
+    fig = go.Figure()
+    if pts:
+        xs = [p.get("ts") for p in pts]
+        yhat = [p.get("yhat") for p in pts]
+        q10 = [p.get("q10", p.get("yhat")) for p in pts]
+        q90 = [p.get("q90", p.get("yhat")) for p in pts]
+        fig.add_scatter(x=xs, y=q90, mode="lines", name="q90")
+        fig.add_scatter(x=xs, y=q10, mode="lines", name="q10", fill="tonexty")
+        fig.add_scatter(x=xs, y=yhat, mode="lines", name="yhat", line=dict(dash="dash"))
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), hovermode="x unified")
+    return fig
+
+def _kpi_chip(label: str, value: str, tone: str = "neutral"):
+    colors = {"good":"#1dd75b","warn":"#ffb300","bad":"#ff4d6d","neutral":"#9bb0ff"}
+    st.markdown(
+        f"<div style='display:inline-block;margin:4px 8px 4px 0;padding:6px 10px;"
+        f"border-radius:999px;background:rgba(124,92,255,0.08);"
+        f"border:1px solid rgba(124,92,255,0.18);color:{colors.get(tone,'#9bb0ff')};"
+        f"font-size:13px;'><b>{label}</b>: {value}</div>",
+        unsafe_allow_html=True,
+    )
+
+# --------------- Tabs ---------------
+tab_overview, tab_signals, tab_wins, tab_backtest, tab_strategy = st.tabs(
+    ["Overview", "Signals", "Wins", "Backtest", "Strategy"]
+)
+
+# ---- Overview ----
+with tab_overview:
+    st.subheader("Forecast")
+    if refresh_fc:
+        try:
+            res = _forecast_cached(token, ARENA, symbol, horizon)
+            evt = res.get("event", res)
+            st.plotly_chart(_plot_forecast(evt), use_container_width=True)
+            metrics = evt.get("metrics", {})
+            regime = evt.get("regime") or metrics.get("regime") or "—"
+            entropy = float(metrics.get("entropy", evt.get("entropy", float("nan"))))
+            edge = float(metrics.get("edge", evt.get("edge", float("nan"))))
+            tone_ent = "good" if entropy <= 0.35 else ("warn" if entropy <= 0.6 else "bad")
+            tone_edge = "good" if edge >= 0.25 else ("warn" if edge >= 0.1 else "neutral")
+            _kpi_chip("Regime", regime, "neutral")
+            _kpi_chip("Entropy", f"{entropy:.2f}", tone_ent)
+            _kpi_chip("LIPE Edge", f"{edge:.2f}", tone_edge)
+        except ApiHTTPError as e:
+            if e.status == 402:
+                st.warning("Crypto is paywalled. Start a trial or subscribe.")
+                if st.button("Subscribe (Stripe Checkout)"):
+                    try:
+                        ck = api_checkout(token or None, ARENA, plan="pro-monthly", trial_days=7)
+                        url = ck.get("url") or ck.get("checkout_url")
+                        if url: st.markdown(f"[Open checkout ↗]({url})")
+                        else: st.info("Checkout link not returned.")
+                    except Exception as ex:
+                        st.error(f"Checkout failed: {ex}")
+            elif e.status == 401:
+                st.error("Unauthorized. Provide a valid token or identity.")
+            else:
+                st.error(f"Forecast error [{e.status}]: {e.payload or e}")
+        except Exception as ex:
+            st.error(f"Forecast failed: {ex}")
+    else:
+        st.info("Set symbol & horizon, then click **Run Forecast**.")
+
+# ---- Signals ----
+with tab_signals:
+    st.subheader("Current Signals")
+    lim = st.slider("Rows", 10, 200, 50, 10, key="sig_limit")
+    if st.button("Load Signals"):
+        try:
+            sigs = _signals_cached(token, ARENA, symbol, lim)
+            if not sigs:
+                st.info("No signals available.")
+            else:
+                df = pd.DataFrame(sigs)
+                # Common columns prioritization
+                cols = [c for c in ["ts","symbol","kind","score","message","edge","entropy"] if c in df.columns]
+                if cols: df = df[cols + [c for c in df.columns if c not in cols]]
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.download_button("Download CSV", df.to_csv(index=False).encode("utf-8"),
+                                   file_name=f"signals_{symbol}.csv", mime="text/csv")
+        except ApiHTTPError as e:
+            st.error(f"Signals error [{e.status}]: {e.payload or e}")
+        except Exception as ex:
+            st.error(f"Signals failed: {ex}")
+
+# ---- Wins ----
+with tab_wins:
+    st.subheader("Green Flag Wins")
+    limw = st.slider("Rows", 10, 200, 50, 10, key="wins_limit")
+    if st.button("Load Wins"):
+        try:
+            wins = _wins_cached(token, ARENA, symbol, limw)
+            if not wins:
+                st.info("No wins logged yet.")
+            else:
+                dfw = pd.DataFrame(wins)
+                # Friendly timeline
+                if "ts" in dfw.columns:
+                    dfw = dfw.sort_values("ts")
+                timeline = go.Figure()
+                if "ts" in dfw.columns and "score" in dfw.columns:
+                    timeline.add_scatter(x=dfw["ts"], y=dfw["score"], mode="lines+markers", name="GFW score")
+                    timeline.update_layout(margin=dict(l=10,r=10,t=10,b=10), hovermode="x")
+                    st.plotly_chart(timeline, use_container_width=True)
+                st.dataframe(dfw, use_container_width=True, hide_index=True)
+                st.download_button("Download CSV", dfw.to_csv(index=False).encode("utf-8"),
+                                   file_name=f"wins_{symbol}.csv", mime="text/csv")
+        except ApiHTTPError as e:
+            st.error(f"Wins error [{e.status}]: {e.payload or e}")
+        except Exception as ex:
+            st.error(f"Wins failed: {ex}")
+
+# ---- Backtest ----
+with tab_backtest:
+    st.subheader("Quick Backtest (via Strategy Eval)")
+    c1,c2,c3,c4 = st.columns(4)
+    with c1: enter_edge = st.slider("Enter: LIPE Edge ≥", 0.0, 1.0, 0.30, 0.01)
+    with c2: enter_entropy = st.slider("Enter: Entropy ≤", 0.0, 1.0, 0.40, 0.01)
+    with c3: exit_entropy = st.slider("Exit: Entropy ≥", 0.0, 1.0, 0.75, 0.01)
+    with c4: lookback = st.slider("Lookback (days)", 30, 365, 180, 5)
+
+    if st.button("Run Backtest"):
+        spec = {
+            "horizon": horizon,
+            "enter": [
+                {"field":"edge","op":">=","value":enter_edge},
+                {"field":"entropy","op":"<=","value":enter_entropy},
+            ],
+            "exit": [{"field":"entropy","op":">=","value":exit_entropy}],
+        }
+        try:
+            bt = _strategy_eval_cached(token, ARENA, symbol, spec, lookback)
+            m = bt.get("metrics", {})
+            eq = bt.get("equity_curve", [])
+            k1,k2,k3,k4 = st.columns(4)
+            k1.metric("Hit Rate", f"{m.get('HitRate', float('nan')):.2f}")
+            k2.metric("ROI", f"{m.get('ROI', float('nan')):.2f}")
+            k3.metric("Max Drawdown", f"{m.get('MaxDrawdown', float('nan')):.2f}")
+            k4.metric("Trades", f"{int(m.get('Trades', 0))}")
+            if eq:
+                xs = [p.get("ts") for p in eq]
+                ys = [float(p.get("equity", 0)) for p in eq]
+                fig_eq = go.Figure([go.Scatter(x=xs, y=ys, mode="lines", name="Equity")])
+                fig_eq.update_layout(margin=dict(l=10,r=10,t=10,b=10), hovermode="x unified")
+                st.plotly_chart(fig_eq, use_container_width=True)
+            else:
+                st.info("No equity curve returned.")
+        except ApiHTTPError as e:
+            st.error(f"Backtest error [{e.status}]: {e.payload or e}")
+        except Exception as ex:
+            st.error(f"Backtest failed: {ex}")
+
+# ---- Strategy (same spec as Backtest; kept for future presets) ----
+with tab_strategy:
+    st.subheader("Strategy Builder (V1)")
+    st.caption("Use the Backtest tab for results; this tab will gain presets & save/load next.")
+    st.write("• Presets coming: Squeeze Long, Entropy Fade, Echo Ride")
