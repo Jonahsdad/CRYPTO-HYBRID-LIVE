@@ -39,3 +39,29 @@ It compares **raw market heat** (volume vs. market cap) with a **Truth Filter** 
 # -----------------------------------------
 # HIS — Streamlit Flagship (Crypto v1)
 ...
+# HIS Flagship — NOW
+
+Two services:
+- **Backend (FastAPI)** on Render: `/v1/forecast`, `/healthz`, simple share links
+- **Frontend (Streamlit)** on Streamlit Cloud: Crypto Flagship, Plans, Status
+
+## Deploy
+
+1) **Render (backend)**
+- Connect repo → Render reads `render.yaml`
+- After deploy, copy your URL, e.g. `https://his-lipe-core.onrender.com`
+- Check `https://.../healthz` → `{"ok": true}`
+
+2) **Streamlit (frontend)**
+- New app → set file path: `streamlit/streamlit_app.py`
+- In Streamlit **Secrets**, add:  
+  `API_BASE_URL = "https://his-lipe-core.onrender.com"`
+- Open app → Sidebar → **Connect** → go to **Crypto Flagship**
+
+## Use
+- Symbol: `BTCUSDT`
+- Horizon: 1..30
+- Run Forecast → see bands, KPIs
+- Create Share Link → get `/v1/share/<token>` URL (public read-only)
+
+> This repo runs without a DB. It uses CCXT for live OHLCV, with a synthetic fallback.
