@@ -1,0 +1,13 @@
+# pages/_registry.py
+from dataclasses import dataclass
+
+@dataclass
+class Arena:
+    key: str       # slug used in the UI
+    module: str    # python module path that exposes show()
+
+ARENAS = [
+    Arena(key="Crypto",  module="pages.crypto_flagship"),
+    Arena(key="Sports",  module="pages.sports"),       # can stub for now
+    Arena(key="Lottery", module="pages.lottery"),      # can stub for now
+]
