@@ -2,66 +2,9 @@ services:
   - type: web
     name: his-lipe-core
     env: python
-    plan: starter
-    autoDeploy: true
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app_lipe_core:app --host 0.0.0.0 --port $PORT
+    plan: free
+    region: oregon
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: gunicorn -w 2 -k uvicorn.workers.UvicornWorker backend.app_lipe_core:app --bind 0.0.0.0:$PORT
     healthCheckPath: /healthz
-    envVars:
-      - key: ENV
-        value: production
-      - key: PORT
-        value: 8000
-      - key: DATABASE_URL
-        fromDatabase:
-          name: his-postgres
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: his-redis
-          type: redis
-          property: connectionString
-      - key: STREAMLIT_ORIGIN
-        fromService:
-          name: his-streamlit-flagship
-          type: web
-          property: url
-      # Stripe / JWT when you’re ready
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_PRICE_CRYPTO_MONTHLY
-        sync: false
-      - key: JWT_SECRET
-        generateValue: true
-
-  - type: web
-    name: his-streamlit-flagship
-    env: python
-    plan: starter
     autoDeploy: true
-    buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0
-    envVars:
-      # Base URL of API (no /v1 suffix; we'll normalize client-side)
-      - key: API_BASE_URL
-        fromService:
-          name: his-lipe-core
-          type: web
-          property: url
-      # Optional: explicitly set Streamlit config via env
-      - key: STREAMLIT_BROWSER_GATHER_USAGE_STATS
-        value: "false"
-
-databases:
-  - name: his-postgres
-    plan: starter
-    databaseName: hisdb
-    user: hisuser
-
-# Managed Redis (free plan) for trials/rate-limits/counters
-# If Redis isn’t available in your region, swap for Upstash URL in env.
-services:
-  - type: redis
-    name: his-redis
-    ipAllowList: []
-    plan: starter
